@@ -52,9 +52,14 @@ const PILL = {
   "Operations Reviewed": "p-ops",
   "Accounts Reviewed": "p-acc",
   Approved: "p-app",
+  "Payment Approved": "p-app",
+  Printed: "p-app",
+  Paid: "p-app",
+  Completed: "p-app",
   Query: "p-qry",
   Rejected: "p-rej",
 };
+
 const pill = (s) =>
   `<span class="pill ${PILL[s] || "p-draft"}">${esc(s)}</span>`;
 
@@ -154,16 +159,24 @@ const can = {
       S.user.role,
     ),
   admin: () => S.user.role === "admin",
-  audit: () => S.user.role === "admin", // P30 — Accounts has no Audit Trail
+  audit: () => S.user.role === "admin",
   addFunds: () => ["admin", "accounts"].includes(S.user.role),
-  payments: () => ["accounts", "admin"].includes(S.user.role), // P31 — Approved Payments tab
-  analytics: () => ["accounts", "admin"].includes(S.user.role), // Analytics/insights charts
-  funds: () => !["site", "purchase", "operations"].includes(S.user.role), // P7/P27 — site, purchase & operations have no Funds & Balance
+  payments: () => ["accounts", "admin"].includes(S.user.role),
+
+  // New Fund Request workflow
+  allFundRequests: () => ["admin", "accounts"].includes(S.user.role),
+  fundRequests: () => S.user.role === "admin",
+  fundRequestsPurchase: () => S.user.role === "purchase",
+  fundsRelease: () => S.user.role === "accounts",
+
+  analytics: () => ["accounts", "admin"].includes(S.user.role),
+  funds: () => !["site", "purchase", "operations"].includes(S.user.role),
   reports: () =>
-    !["site", "checker", "purchase", "operations"].includes(S.user.role), // P7/P20/P27 — site, checker, purchase & operations have no Reports & Export
-  reviewTab: () => can.review() && S.user.role !== "checker", // P20 — checker reviews from the dashboard, not a separate queue
-  reviewOnly: () => ["purchase", "operations"].includes(S.user.role), // P27 — purchaser (and operations, same rule) sees only the Review Queue
+    !["site", "checker", "purchase", "operations"].includes(S.user.role),
+  reviewTab: () => can.review() && S.user.role !== "checker",
+  reviewOnly: () => ["purchase", "operations"].includes(S.user.role),
 };
+
 function pendingForMe(list) {
   const r = S.user.role;
   if (r === "checker") return list.filter((e) => e.status === "Submitted");
@@ -207,6 +220,28 @@ async function buildNav() {
       label: "Review Queue",
       badge: pend || "",
     });
+
+  if (can.fundRequestsPurchase())
+    items.push({
+      id: "fundRequestsPurchase",
+      ic: "₹",
+      label: "Fund Requests",
+    });
+
+  if (can.fundsRelease())
+    items.push({
+      id: "fundsRelease",
+      ic: "₹",
+      label: "Funds Release",
+    });
+
+  if (can.allFundRequests())
+  items.push({
+    id: "allFundRequests",
+    ic: "₹",
+    label: "All Fund Requests",
+  });
+
   if (can.funds())
     items.push({ id: "funds", ic: "₹", label: "Funds & Balance" });
   if (can.reports())
@@ -216,6 +251,12 @@ async function buildNav() {
     );
   if (can.payments())
     items.push({ id: "payments", ic: "✔", label: "Approved Payments" });
+  if (can.fundRequests())
+    items.push({
+      id: "fundRequests",
+      ic: "₹",
+      label: "Fund Request",
+    });
   if (can.analytics())
     items.push({ id: "analytics", ic: "📊", label: "Analytics" });
   if (can.admin() || can.audit()) {
@@ -242,6 +283,19 @@ async function buildNav() {
   if (can.create()) bn.push({ id: "__new", ic: "+", label: "New", add: true });
   if (can.reviewTab())
     bn.push({ id: "review", ic: "✓", label: "Review", badge: pend || "" });
+  if (can.fundRequestsPurchase())
+    bn.push({
+      id: "fundRequestsPurchase",
+      ic: "₹",
+      label: "Requests",
+    });
+  if (can.fundsRelease())
+    bn.push({
+      id: "fundsRelease",
+      ic: "₹",
+      label: "Release",
+    });
+    
   if (can.funds()) bn.push({ id: "funds", ic: "₹", label: "Balance" });
   if (can.payments()) bn.push({ id: "payments", ic: "✔", label: "Pay" });
   $("#botnav").innerHTML = bn
@@ -257,14 +311,44 @@ const TITLES = {
   review: ["Review Queue", "Items awaiting your action"],
   funds: ["Funds & Balance", "Money given vs spent per project"],
   reports: ["Reports & Export", "Filter and download CSV"],
+  fundRequests: [
+    "Fund Request",
+    "Select Payment Approved vouchers and request funds",
+  ],
+
+  fundRequestsPurchase: [
+    "Fund Requests",
+    "Requests awaiting paperwork and Accounts processing",
+  ],
+
+  fundsRelease: [
+    "Funds Release",
+    "Release funds for printed fund requests",
+  ],
+  allFundRequests: [
+    "All Fund Requests",
+    "Complete history of fund requests",
+  ],
   users: ["Users & Access", "Accounts, roles & project access"],
   masters: ["Masters", "Categories, projects & locations"],
   audit: ["Audit Trail", "Complete activity log"],
   payments: ["Approved Payments", "Select approved vouchers to pay"],
+  paymentReceived: [
+    "Payment Received",
+    "Confirm payments received after Accounts approval",
+  ],
   analytics: ["Analytics", "Spend comparisons & trends"],
 };
+
 async function go(pg) {
-  if (can.reviewOnly() && pg !== "review") pg = "review"; // P27 — purchaser only has the Review Queue
+  if (
+    can.reviewOnly() &&
+    pg !== "review" &&
+    !(S.user.role === "purchase" && pg === "fundRequestsPurchase")
+  ) {
+    pg = "review";
+  } 
+
   S.page = pg;
   $$("#nav a").forEach((a) =>
     a.classList.toggle("active", a.dataset.pg === pg),
@@ -603,7 +687,7 @@ Views.analytics = async function () {
 };
 Views.payments = async function () {
   const ex = await api("GET", "/expenses");
-  const list = ex.filter((e) => e.status === "Approved" && !e.paid);
+  const list = ex.filter((e) => e.status === "Approved");
   const total = list.reduce((s, e) => s + (+e.amount || 0), 0);
   const rows =
     list
@@ -639,6 +723,2193 @@ Views.payments = async function () {
       </div>
     </div>
     <div class="table-wrap"><table><thead><tr><th><input type="checkbox" onclick="Views._toggleAllPay(this)"></th><th>Voucher</th><th>Date</th><th>Details</th><th>Project</th><th class="num">Amount</th><th></th></tr></thead><tbody>${rows}</tbody></table></div></div>`;
+};
+
+Views.fundRequests = async function () {
+  const list = await api("GET", "/fund-requests/eligible");
+
+  const projects = [
+    ...new Map(
+      list
+        .filter((e) => e.project_id)
+        .map((e) => [
+          e.project_id,
+          {
+            id: e.project_id,
+            code: e.projectCode,
+            name: e.projectName,
+          },
+        ]),
+    ).values(),
+  ];
+
+  const locations = [
+    ...new Map(
+      list
+        .filter((e) => e.location_id)
+        .map((e) => [
+          e.location_id,
+          {
+            id: e.location_id,
+            name: e.locationName,
+          },
+        ]),
+    ).values(),
+  ];
+
+  $("#content").innerHTML = `
+    <div class="card card-pad" style="margin-bottom:16px">
+      <div class="toolbar">
+        <input
+          id="fr-q"
+          placeholder="Search voucher / details…"
+          oninput="Views._filterFundRequests()"
+        >
+
+        <select id="fr-project" onchange="Views._filterFundRequests()">
+          <option value="">All Projects</option>
+          ${projects
+            .map(
+              (p) =>
+                `<option value="${esc(p.id)}">${esc(p.code)} · ${esc(p.name)}</option>`,
+            )
+            .join("")}
+        </select>
+
+        <select id="fr-location" onchange="Views._filterFundRequests()">
+          <option value="">All Sites / Locations</option>
+          ${locations
+            .map(
+              (l) =>
+                `<option value="${esc(l.id)}">${esc(l.name)}</option>`,
+            )
+            .join("")}
+        </select>
+
+        <div class="spacer"></div>
+
+        <span id="fr-count" class="csub" style="margin:0"></span>
+      </div>
+    </div>
+
+    <div class="card">
+      <div
+        class="card-pad"
+        style="
+          display:flex;
+          align-items:center;
+          justify-content:space-between;
+          border-bottom:1px solid var(--line);
+        "
+      >
+        <div>
+          <h3>Eligible Vouchers</h3>
+          <div class="csub" style="margin:0">
+            Payment Approved vouchers not yet included in an active fund request
+          </div>
+        </div>
+
+        <button
+          class="btn btn-primary"
+          onclick="Views._createFundRequest()"
+        >
+          Release Funds
+        </button>
+      </div>
+
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>
+                <input
+                  type="checkbox"
+                  onclick="Views._toggleAllFundRequests(this)"
+                >
+              </th>
+              <th>Voucher</th>
+              <th>Date</th>
+              <th>Details</th>
+              <th>Project</th>
+              <th>Site / Location</th>
+              <th class="num">Amount</th>
+              <th>Status</th>
+              <th></th>
+            </tr>
+          </thead>
+
+          <tbody id="fr-body"></tbody>
+        </table>
+      </div>
+    </div>
+  `;
+
+  Views._fundRequests = list;
+  Views._filterFundRequests();
+};
+
+Views.fundRequestsPurchase = async function () {
+  const requests = await api("GET", "/fund-requests");
+
+  const active = requests.filter(
+    (r) => !["Completed", "Cancelled"].includes(r.status),
+  );
+
+  const rows =
+    active
+      .map(
+        (r) => `
+          <tr>
+            <td>
+              <input
+                type="checkbox"
+                class="frp-cb"
+                value="${esc(r.id)}"
+              >
+            </td>
+
+            <td class="mono">
+              <b>${esc(r.request_no)}</b>
+            </td>
+
+            <td>
+              ${fmtDate(Number(r.created_at))}
+            </td>
+
+            <td>
+              ${esc(r.created_by_name || "—")}
+            </td>
+
+            <td class="num">
+              ${r.item_count || 0}
+            </td>
+
+            <td class="num">
+              ${money(r.total)}
+            </td>
+
+            <td>
+              ${pill(r.status)}
+            </td>
+
+            <td>
+              <button
+                class="btn btn-ghost btn-sm"
+                onclick="Views._openFundRequest('${esc(r.id)}')"
+              >
+                View
+              </button>
+            </td>
+          </tr>
+        `,
+      )
+      .join("") ||
+    `
+      <tr>
+        <td colspan="8">
+          <div class="empty">
+            No fund requests are currently awaiting processing.
+          </div>
+        </td>
+      </tr>
+    `;
+
+  $("#content").innerHTML = `
+    <div class="card">
+      <div
+        class="card-pad"
+        style="
+          display:flex;
+          align-items:center;
+          justify-content:space-between;
+          border-bottom:1px solid var(--line);
+        "
+      >
+        <div>
+          <h3>Fund Requests</h3>
+          <div class="csub" style="margin:0">
+            Requests created by Admin for Payment Approved vouchers
+          </div>
+        </div>
+
+        <div style="display:flex;gap:8px">
+          <button
+            class="btn btn-ghost"
+            onclick="Views._printSelectedFundRequests()"
+          >
+            Print Selected
+          </button>
+        </div>
+      </div>
+
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>
+                <input
+                  type="checkbox"
+                  onclick="Views._toggleAllFundRequestsPurchase(this)"
+                >
+              </th>
+              <th>Request</th>
+              <th>Created</th>
+              <th>Created By</th>
+              <th class="num">Vouchers</th>
+              <th class="num">Total</th>
+              <th>Status</th>
+              <th></th>
+            </tr>
+          </thead>
+
+          <tbody>
+            ${rows}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  `;
+};
+
+Views.allFundRequests = async function () {
+  const requests = await api("GET", "/fund-requests");
+
+  const rows =
+    requests
+      .map(
+        (r) => `
+          <tr>
+            <td class="mono">
+              <b>${esc(r.request_no || r.requestNo || "—")}</b>
+            </td>
+
+            <td>
+              ${fmtDate(Number(r.created_at))}
+            </td>
+
+            <td>
+              ${esc(
+                r.created_by_name ||
+                r.createdByName ||
+                "—"
+              )}
+            </td>
+
+            <td class="num">
+              ${r.item_count || r.itemCount || 0}
+            </td>
+
+            <td class="num">
+              ${money(r.total)}
+            </td>
+
+            <td>
+              ${pill(r.status)}
+            </td>
+
+            <td>
+              <button
+                class="btn btn-ghost btn-sm"
+                onclick="Views._openFundRequest('${esc(r.id)}')"
+              >
+                View
+              </button>
+            </td>
+          </tr>
+        `,
+      )
+      .join("") ||
+    `
+      <tr>
+        <td colspan="7">
+          <div class="empty">
+            No fund requests found.
+          </div>
+        </td>
+      </tr>
+    `;
+
+  $("#content").innerHTML = `
+    <div class="card">
+      <div
+        class="card-pad"
+        style="
+          display:flex;
+          align-items:center;
+          justify-content:space-between;
+          border-bottom:1px solid var(--line);
+        "
+      >
+        <div>
+          <h3>All Fund Requests</h3>
+          <div class="csub" style="margin:0">
+            Complete history of fund requests
+          </div>
+        </div>
+
+        <div class="tag">
+          ${requests.length} request${requests.length === 1 ? "" : "s"}
+        </div>
+      </div>
+
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>Request</th>
+              <th>Created</th>
+              <th>Created By</th>
+              <th class="num">Vouchers</th>
+              <th class="num">Total</th>
+              <th>Status</th>
+              <th></th>
+            </tr>
+          </thead>
+
+          <tbody>
+            ${rows}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  `;
+};
+
+
+Views.fundsRelease = async function () {
+  const requests = await api("GET", "/fund-requests");
+
+  const printed = requests.filter(
+    (r) => r.status === "Printed"
+  );
+
+  const rows =
+    printed
+      .map(
+        (r) => `
+          <tr>
+            <td class="mono">
+              <b>${esc(r.request_no || r.requestNo || "—")}</b>
+            </td>
+
+            <td>
+              ${fmtDate(Number(r.created_at))}
+            </td>
+
+            <td>
+              ${esc(
+                r.created_by_name ||
+                r.createdByName ||
+                "—"
+              )}
+            </td>
+
+            <td class="num">
+              ${r.item_count || r.itemCount || 0}
+            </td>
+
+            <td class="num">
+              ${money(r.total)}
+            </td>
+
+            <td>
+              ${pill(r.status)}
+            </td>
+
+            <td>
+              <button
+                class="btn btn-ghost btn-sm"
+                onclick="Views._openFundRequestRelease('${esc(r.id)}')"
+              >
+                View
+              </button>
+
+              <button
+                class="btn btn-primary btn-sm"
+                onclick="Views._releaseFundRequest('${esc(r.id)}')"
+              >
+                Payment Released
+              </button>
+            </td>
+          </tr>
+        `
+      )
+      .join("") ||
+    `
+      <tr>
+        <td colspan="7">
+          <div class="empty">
+            No printed fund requests are awaiting payment release.
+          </div>
+        </td>
+      </tr>
+    `;
+
+  $("#content").innerHTML = `
+    <div class="card">
+
+      <div
+        class="card-pad"
+        style="
+          display:flex;
+          align-items:center;
+          justify-content:space-between;
+          border-bottom:1px solid var(--line);
+        "
+      >
+        <div>
+          <h3>Funds Release</h3>
+
+          <div class="csub" style="margin:0">
+            Printed fund requests awaiting actual payment
+          </div>
+        </div>
+      </div>
+
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>Request</th>
+              <th>Created</th>
+              <th>Created By</th>
+              <th class="num">Vouchers</th>
+              <th class="num">Total</th>
+              <th>Status</th>
+              <th></th>
+            </tr>
+          </thead>
+
+          <tbody>
+            ${rows}
+          </tbody>
+        </table>
+      </div>
+
+    </div>
+  `;
+};
+
+Views._openFundRequestRelease = async function (id) {
+  try {
+    const dl = (k, v) =>
+      `<div class="dl">${k}</div><div class="dv">${v}</div>`;
+
+    const r = await api(
+      "GET",
+      `/fund-requests/${encodeURIComponent(id)}`
+    );
+
+    const items = r.items || [];
+
+    const itemRows =
+      items
+        .map(
+          (e) => `
+            <tr>
+              <td class="mono">${esc(e.voucher_no)}</td>
+              <td>${fmtDate(e.date)}</td>
+              <td>${esc(e.details || "—")}</td>
+              <td>${esc(e.projectCode || "—")}</td>
+              <td>${esc(e.locationName || "—")}</td>
+              <td class="num">${money(e.amount)}</td>
+            </tr>
+          `
+        )
+        .join("") ||
+      `
+        <tr>
+          <td colspan="6">
+            <div class="empty">
+              No vouchers in this request.
+            </div>
+          </td>
+        </tr>
+      `;
+
+    Modal.open(`
+      <div class="modal-head">
+        <h3>${esc(r.request_no || r.requestNo)}</h3>
+        ${pill(r.status)}
+        <button class="x" onclick="Modal.close()">×</button>
+      </div>
+
+      <div class="modal-body">
+
+        <div class="detail-grid">
+          ${dl(
+            "Request",
+            esc(r.request_no || r.requestNo || "—")
+          )}
+
+          ${dl(
+            "Created",
+            fmtDT(Number(r.created_at))
+          )}
+
+          ${dl(
+            "Created By",
+            esc(
+              r.created_by_name ||
+              r.createdByName ||
+              "—"
+            )
+          )}
+
+          ${dl(
+            "Vouchers",
+            String(items.length)
+          )}
+
+          ${dl(
+            "Total",
+            `<b class="mono">${money(r.total)}</b>`
+          )}
+
+          ${dl(
+            "Status",
+            pill(r.status)
+          )}
+        </div>
+
+        <div class="section-t">
+          Vouchers
+        </div>
+
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>Voucher</th>
+                <th>Date</th>
+                <th>Details</th>
+                <th>Project</th>
+                <th>Site</th>
+                <th class="num">Amount</th>
+              </tr>
+            </thead>
+
+            <tbody>
+              ${itemRows}
+            </tbody>
+          </table>
+        </div>
+
+        <div
+          style="
+            display:flex;
+            justify-content:flex-end;
+            gap:8px;
+            margin-top:18px;
+          "
+        >
+
+          <button
+            class="btn btn-ghost"
+            onclick="Modal.close()"
+          >
+            Cancel
+          </button>
+
+          <button
+            class="btn btn-primary"
+            onclick="Views._releaseFundRequest('${esc(r.id)}')"
+          >
+            Payment Released
+          </button>
+
+        </div>
+
+      </div>
+    `);
+
+  } catch (e) {
+    toast(e.message, "err");
+  }
+};
+
+Views._releaseFundRequest = async function (id) {
+  try {
+    const r = await api(
+      "GET",
+      `/fund-requests/${encodeURIComponent(id)}`
+    );
+
+    const requestNo = r.request_no || r.requestNo;
+    const total = Number(r.total || r.total_amount || 0);
+    const count = (r.items || []).length;
+
+    if (
+      !confirm(
+        `Release payment for ${requestNo}?\n\n` +
+        `${count} voucher(s)\n` +
+        `${money(total)}\n\n` +
+        `This will mark the vouchers Paid and deposit the released amount into the project fund pool.`
+      )
+    ) {
+      return;
+    }
+
+    const result = await api(
+      "POST",
+      `/fund-requests/${encodeURIComponent(id)}/release`
+    );
+
+    Modal.close();
+
+    toast(
+      `${result.requestNo} released · ${money(result.total)} · ${result.count} voucher(s)`,
+      "ok"
+    );
+
+    go("fundsRelease");
+
+  } catch (e) {
+    toast(e.message, "err");
+  }
+};
+
+Views._filterFundRequests = function () {
+  let rows = Views._fundRequests || [];
+
+  const q = ($("#fr-q").value || "").trim().toLowerCase();
+  const project = $("#fr-project").value;
+  const location = $("#fr-location").value;
+
+  if (q) {
+    rows = rows.filter(
+      (e) =>
+        (e.voucher_no || "").toLowerCase().includes(q) ||
+        (e.details || "").toLowerCase().includes(q),
+    );
+  }
+
+  if (project) {
+    rows = rows.filter((e) => String(e.project_id) === String(project));
+  }
+
+  if (location) {
+    rows = rows.filter((e) => String(e.location_id) === String(location));
+  }
+
+  const total = rows.reduce(
+    (sum, e) => sum + (+e.amount || 0),
+    0,
+  );
+
+  $("#fr-count").textContent =
+    `${rows.length} voucher(s) · ${money(total)}`;
+
+  $("#fr-body").innerHTML =
+    rows
+      .map(
+        (e) => `
+          <tr>
+            <td>
+              <input
+                type="checkbox"
+                class="fr-cb"
+                value="${esc(e.id)}"
+              >
+            </td>
+
+            <td class="mono">${esc(e.voucher_no)}</td>
+
+            <td>${fmtDate(e.date)}</td>
+
+            <td>
+              ${esc((e.details || "").slice(0, 42))}
+            </td>
+
+            <td>
+              ${esc(e.projectCode || "—")}
+            </td>
+
+            <td>
+              ${esc(e.locationName || "—")}
+            </td>
+
+            <td class="num">
+              ${money(e.amount)}
+            </td>
+
+            <td>
+              ${pill(e.status)}
+            </td>
+
+            <td>
+              <button
+                class="btn btn-ghost btn-sm"
+                onclick="Detail.open('${e.id}')"
+              >
+                View
+              </button>
+            </td>
+          </tr>
+        `,
+      )
+      .join("") ||
+    `
+      <tr>
+        <td colspan="9">
+          <div class="empty">
+            No Payment Approved vouchers are currently available for a fund request.
+          </div>
+        </td>
+      </tr>
+    `;
+};
+
+Views._toggleAllFundRequests = function (master) {
+  $$(".fr-cb").forEach((cb) => {
+    cb.checked = master.checked;
+  });
+};
+
+Views._createFundRequest = async function () {
+  const ids = $$(".fr-cb")
+    .filter((cb) => cb.checked)
+    .map((cb) => cb.value);
+
+  if (!ids.length) {
+    toast("Select at least one voucher", "err");
+    return;
+  }
+
+  const selected = (Views._fundRequests || []).filter((e) =>
+    ids.includes(e.id),
+  );
+
+  const total = selected.reduce(
+    (sum, e) => sum + (+e.amount || 0),
+    0,
+  );
+
+  if (
+    !confirm(
+      `Create a Fund Request for ${ids.length} voucher(s) totaling ${money(total)}?`,
+    )
+  ) {
+    return;
+  }
+
+  try {
+    const r = await api("POST", "/fund-requests", { ids });
+
+    toast(
+      `${r.requestNo} created · ${money(r.total)} · ${r.count} voucher(s)`,
+      "ok",
+    );
+
+    go("fundRequests");
+  } catch (e) {
+    toast(e.message, "err");
+  }
+};
+
+Views._toggleAllFundRequestsPurchase = function (master) {
+  $$(".frp-cb").forEach((cb) => {
+    cb.checked = master.checked;
+  });
+};
+
+Views._openFundRequest = async function (id) {
+  try {
+    const dl = (k, v) =>
+      `<div class="dl">${k}</div><div class="dv">${v}</div>`;
+
+    const r = await api(
+      "GET",
+      `/fund-requests/${encodeURIComponent(id)}`,
+    );
+
+    const items = r.items || [];
+
+    const itemRows =
+      items
+        .map(
+          (e) => `
+            <tr>
+              <td class="mono">${esc(e.voucher_no)}</td>
+              <td>${fmtDate(e.date)}</td>
+              <td>${esc(e.details || "—")}</td>
+              <td>${esc(e.projectCode || "—")}</td>
+              <td>${esc(e.locationName || "—")}</td>
+              <td class="num">${money(e.amount)}</td>
+            </tr>
+          `,
+        )
+        .join("") ||
+      `
+        <tr>
+          <td colspan="6">
+            <div class="empty">No vouchers in this request.</div>
+          </td>
+        </tr>
+      `;
+
+    Modal.open(`
+      <div class="modal-head">
+        <h3>${esc(r.request_no)}</h3>
+        ${pill(r.status)}
+        <button class="x" onclick="Modal.close()">×</button>
+      </div>
+
+      <div class="modal-body">
+        <div class="detail-grid">
+          ${dl("Request", esc(r.request_no ||  r.requestNo || "—"))}
+          ${dl("Created", fmtDT(Number(r.created_at)))}
+          ${dl("Created By", esc(r.created_by_name || "—"))}
+          ${dl("Vouchers", String(items.length))}
+          ${dl("Total", `<b class="mono">${money(r.total)}</b>`)}
+          ${dl("Status", pill(r.status))}
+        </div>
+
+        <div class="section-t">Vouchers</div>
+
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>Voucher</th>
+                <th>Date</th>
+                <th>Details</th>
+                <th>Project</th>
+                <th>Site</th>
+                <th class="num">Amount</th>
+              </tr>
+            </thead>
+            <tbody>
+              ${itemRows}
+            </tbody>
+          </table>
+        </div>
+
+        <div
+          style="
+            display:flex;
+            justify-content:flex-end;
+            gap:8px;
+            margin-top:18px;
+          "
+        >
+          <button
+            class="btn btn-ghost"
+            onclick="Views._printFundRequest('${esc(r.id)}')"
+          >
+            Print Request
+          </button>
+
+          <button
+            class="btn btn-primary"
+            onclick="Views._markFundRequestPrinted('${esc(r.id)}')"
+          >
+            Mark as Printed
+          </button>
+
+          <button
+            class="btn btn-ghost"
+            onclick="Modal.close()"
+          >
+            Close
+          </button>
+        </div>
+      </div>
+    `);
+  } catch (e) {
+    toast(e.message, "err");
+  }
+};
+
+Views._printFundRequest = async function (id) {
+  try {
+    const r = await api(
+      "GET",
+      `/fund-requests/${encodeURIComponent(id)}`,
+    );
+    const requestNo = r.request_no || "—";
+    const createdBy = r.created_by_name || "—";
+    const items = r.items || [];
+
+    if (!items.length) {
+      toast("Fund request contains no vouchers", "err");
+      return;
+    }
+
+    /* =========================================================
+       GROUP VOUCHERS BY PROJECT
+    ========================================================= */
+
+    const projectMap = new Map();
+
+    items.forEach((e) => {
+      const key = e.projectCode || e.project_id || "UNKNOWN";
+
+      if (!projectMap.has(key)) {
+        projectMap.set(key, {
+          code: e.projectCode || "UNKNOWN",
+          name: e.projectName || "",
+          amount: 0,
+          items: [],
+        });
+      }
+
+      const project = projectMap.get(key);
+
+      project.amount += Number(e.amount || 0);
+      project.items.push(e);
+    });
+
+    const projects = Array.from(projectMap.values()).sort(
+      (a, b) => a.code.localeCompare(b.code),
+    );
+
+    const total = items.reduce(
+      (sum, e) => sum + Number(e.amount || 0),
+      0,
+    );
+
+    /* =========================================================
+       PAGE 1 — PROJECT SUMMARY
+    ========================================================= */
+
+    const projectRows = projects
+      .map(
+        (p, index) => `
+          <tr>
+            <td class="center">
+              ${index + 1}
+            </td>
+
+            <td>
+              <strong>${esc(p.code)}</strong>
+              ${
+                p.name
+                  ? `<div class="muted">${esc(p.name)}</div>`
+                  : ""
+              }
+            </td>
+
+            <td class="amount">
+              ${money(p.amount)}
+            </td>
+          </tr>
+        `,
+      )
+      .join("");
+
+    /* =========================================================
+       WORKFLOW HISTORY
+    ========================================================= */
+
+  
+
+    /* =========================================================
+       ANNEXURES — ONE SECTION PER PROJECT
+    ========================================================= */
+
+    const annexures = projects
+      .map(
+        (p) => {
+
+          const voucherBlocks = p.items
+            .map(
+              (e, index) => {
+
+
+                return `
+                  <div class="voucher-block">
+
+                    <!-- VOUCHER HEADER -->
+
+                    <div class="voucher-heading">
+
+                      <div>
+                        <strong>
+                          Voucher ${index + 1}
+                        </strong>
+
+                        <span class="voucher-no">
+                          ${esc(e.voucher_no || "")}
+                        </span>
+                      </div>
+
+                      <div class="voucher-amount">
+                        ${money(e.amount)}
+                      </div>
+
+                    </div>
+
+
+                    <!-- VOUCHER DETAILS -->
+
+                    <table class="voucher-details">
+
+                      <tbody>
+
+                        <tr>
+
+                          <td class="label">
+                            Voucher No.
+                          </td>
+
+                          <td>
+                            ${esc(e.voucher_no || "")}
+                          </td>
+
+                          <td class="label">
+                            Voucher Date
+                          </td>
+
+                          <td>
+                            ${fmtDate(e.date)}
+                          </td>
+
+                        </tr>
+
+                        <tr>
+
+                          <td class="label">
+                            Created By
+                          </td>
+
+                          <td>
+                            ${esc(e.createdByName || "—")}
+                          </td>
+
+                          <td class="label">
+                            Site / Location
+                          </td>
+
+                          <td>
+                            ${esc(e.locationName || "—")}
+                          </td>
+
+                        </tr>
+
+                        <tr>
+
+                          <td class="label">
+                            Category
+                          </td>
+
+                          <td>
+                            ${esc(e.categoryName || "—")}
+                          </td>
+
+                          <td class="label">
+                            Amount
+                          </td>
+
+                          <td>
+                            <strong>
+                              ${money(e.amount)}
+                            </strong>
+                          </td>
+
+                        </tr>
+
+                        <tr>
+
+                          <td class="label">
+                            Details
+                          </td>
+
+                          <td colspan="3">
+                            ${esc(e.details || "—")}
+                          </td>
+
+                        </tr>
+
+                      </tbody>
+
+                    </table>
+
+
+                    
+
+                  </div>
+                `;
+              },
+            )
+            .join("");
+
+          return `
+            <section class="annexure">
+
+              <div class="annexure-heading">
+
+                <div class="annexure-title">
+                  ANNEXURE
+                </div>
+
+                <div class="annexure-project">
+                  PROJECT: ${esc(p.code)}
+                </div>
+
+                ${
+                  p.name
+                    ? `
+                      <div class="annexure-project-name">
+                        ${esc(p.name)}
+                      </div>
+                    `
+                    : ""
+                }
+
+              </div>
+
+
+              ${voucherBlocks}
+
+
+              <div class="project-total">
+
+                <span>
+                  Project Total
+                </span>
+
+                <strong>
+                  ${money(p.amount)}
+                </strong>
+
+              </div>
+
+            </section>
+          `;
+        },
+      )
+      .join("");
+
+    /* =========================================================
+       PRINT WINDOW
+    ========================================================= */
+
+    const w = window.open(
+      "",
+      "_blank",
+      "width=1100,height=800",
+    );
+
+    if (!w) {
+      toast("Please allow pop-ups to print", "err");
+      return;
+    }
+
+    w.document.write(`
+      <!DOCTYPE html>
+
+      <html>
+
+      <head>
+
+        <title>
+          ${esc(requestNo || "Fund Request")}
+        </title>
+
+
+        <style>
+
+          @page {
+            size: A4 portrait;
+            margin: 12mm;
+          }
+
+          * {
+            box-sizing: border-box;
+          }
+
+          body {
+            margin: 0;
+            padding: 0;
+            font-family:
+              Arial,
+              Helvetica,
+              sans-serif;
+
+            color: #111;
+
+            font-size: 11px;
+
+            line-height: 1.35;
+          }
+
+
+          /* =================================================
+             PAGE
+          ================================================= */
+
+          .page {
+            min-height: 270mm;
+            position: relative;
+          }
+
+
+          /* =================================================
+             PAGE 1 HEADER
+          ================================================= */
+
+          .document-title {
+            text-align: center;
+
+            font-size: 20px;
+
+            font-weight: bold;
+
+            margin-bottom: 3px;
+
+            text-transform: uppercase;
+          }
+
+          .document-subtitle {
+            text-align: center;
+
+            font-size: 11px;
+
+            margin-bottom: 18px;
+          }
+
+
+          /* =================================================
+             META
+          ================================================= */
+
+          .meta-table {
+            width: 100%;
+
+            border-collapse: collapse;
+
+            margin-bottom: 18px;
+          }
+
+          .meta-table td {
+            border: 1px solid #999;
+
+            padding: 7px 9px;
+          }
+
+          .meta-label {
+            font-weight: bold;
+
+            width: 100px;
+          }
+
+
+          /* =================================================
+             TO / SUBJECT
+          ================================================= */
+
+          .to-block {
+            margin-top: 10px;
+
+            margin-bottom: 9px;
+
+            font-size: 12px;
+          }
+
+          .subject {
+            border: 1px solid #999;
+
+            padding: 8px 10px;
+
+            margin-bottom: 18px;
+
+            font-size: 12px;
+          }
+
+          .subject-label {
+            font-weight: bold;
+
+            margin-right: 8px;
+          }
+
+
+          /* =================================================
+             SECTION
+          ================================================= */
+
+          .section-heading {
+            font-size: 14px;
+
+            font-weight: bold;
+
+            text-decoration: underline;
+
+            margin-bottom: 8px;
+          }
+
+
+          /* =================================================
+             GENERAL TABLE
+          ================================================= */
+
+          table {
+            width: 100%;
+
+            border-collapse: collapse;
+          }
+
+          th,
+          td {
+            border: 1px solid #888;
+
+            padding: 6px 7px;
+
+            vertical-align: top;
+          }
+
+          th {
+            text-align: center;
+
+            font-weight: bold;
+          }
+
+          .center {
+            text-align: center;
+          }
+
+          .amount {
+            text-align: right;
+
+            white-space: nowrap;
+          }
+
+          .muted {
+            color: #555;
+
+            font-size: 9px;
+          }
+
+
+          /* =================================================
+             TOTAL
+          ================================================= */
+
+          .summary-total {
+            margin-top: 12px;
+
+            display: flex;
+
+            justify-content: flex-end;
+          }
+
+          .summary-total-box {
+            border: 1px solid #777;
+
+            padding: 9px 12px;
+
+            min-width: 260px;
+
+            display: flex;
+
+            justify-content: space-between;
+
+            gap: 30px;
+
+            font-size: 13px;
+
+            font-weight: bold;
+          }
+
+
+          /* =================================================
+             NOTE
+          ================================================= */
+
+          .request-note {
+            margin-top: 22px;
+
+            border: 1px solid #999;
+
+            padding: 10px 12px;
+
+            font-size: 10px;
+          }
+
+
+          /* =================================================
+             SIGNATURES
+          ================================================= */
+
+          .signature-area {
+            position: absolute;
+
+            left: 0;
+
+            right: 0;
+
+            bottom: 18mm;
+
+            display: grid;
+
+            grid-template-columns: 1fr 1fr;
+
+            gap: 100px;
+          }
+
+          .signature-box {
+            text-align: center;
+
+            padding-top: 50px;
+          }
+
+          .signature-line {
+            border-top: 1px solid #111;
+
+            margin-bottom: 7px;
+          }
+
+          .signature-name {
+            font-weight: bold;
+
+            font-size: 11px;
+          }
+
+
+          /* =================================================
+             ANNEXURE
+          ================================================= */
+
+          .annexure {
+            page-break-before: always;
+          }
+
+          .annexure-heading {
+            text-align: center;
+
+            margin-bottom: 18px;
+          }
+
+          .annexure-title {
+            font-size: 17px;
+
+            font-weight: bold;
+
+            text-decoration: underline;
+          }
+
+          .annexure-project {
+            font-size: 15px;
+
+            font-weight: bold;
+
+            margin-top: 5px;
+          }
+
+          .annexure-project-name {
+            font-size: 10px;
+
+            color: #555;
+
+            margin-top: 2px;
+          }
+
+
+          /* =================================================
+             VOUCHER BLOCK
+          ================================================= */
+
+          .voucher-block {
+            margin-bottom: 22px;
+
+            page-break-inside: avoid;
+          }
+
+          .voucher-heading {
+            display: flex;
+
+            justify-content: space-between;
+
+            align-items: center;
+
+            border: 1px solid #777;
+
+            border-bottom: 0;
+
+            padding: 7px 9px;
+
+            font-size: 12px;
+
+            background: #f5f5f5;
+          }
+
+          .voucher-no {
+            margin-left: 12px;
+
+            font-weight: bold;
+          }
+
+          .voucher-amount {
+            font-weight: bold;
+
+            white-space: nowrap;
+          }
+
+
+          /* =================================================
+             VOUCHER DETAILS
+          ================================================= */
+
+          .voucher-details {
+            margin-bottom: 8px;
+          }
+
+          .voucher-details .label {
+            width: 110px;
+
+            font-weight: bold;
+
+            background: #fafafa;
+          }
+
+          /* =================================================
+             PROJECT TOTAL
+          ================================================= */
+
+          .project-total {
+            display: flex;
+
+            justify-content: flex-end;
+
+            gap: 30px;
+
+            font-size: 12px;
+
+            font-weight: bold;
+
+            margin-top: 5px;
+
+            padding: 8px;
+
+            border-top: 2px solid #555;
+          }
+
+
+          /* =================================================
+             PRINT
+          ================================================= */
+
+          tr {
+            page-break-inside: avoid;
+          }
+
+          @media print {
+
+            body {
+              margin: 0;
+            }
+
+          }
+
+        </style>
+
+      </head>
+
+
+      <body>
+
+
+        <!-- =================================================
+             PAGE 1
+        ================================================= -->
+
+        <section class="page">
+
+
+          <div class="document-title">
+            Fund Request
+          </div>
+
+          <div class="document-subtitle">
+            SiteXpense
+          </div>
+
+
+          <table class="meta-table">
+
+            <tr>
+
+              <td class="meta-label">
+                Request No.
+              </td>
+
+              <td>
+                ${esc(requestNo || "—")}
+              </td>
+
+              <td class="meta-label">
+                Date
+              </td>
+
+              <td>
+                ${fmtDate(r.created_at)}
+              </td>
+
+            </tr>
+
+          </table>
+
+
+          <div class="to-block">
+
+            <strong>To:</strong>
+
+            Hon. Chairman Sir, Managing Director Sir
+
+          </div>
+
+
+          <div class="subject">
+
+            <span class="subject-label">
+              Subject:
+            </span>
+
+            Request for Funds - Site Expense
+
+          </div>
+
+
+          <div class="section-heading">
+            Project-wise Fund Requirement
+          </div>
+
+
+          <table>
+
+            <thead>
+
+              <tr>
+
+                <th style="width:55px">
+                  Sr. No.
+                </th>
+
+                <th>
+                  Project
+                </th>
+
+                <th style="width:170px">
+                  Requested Amount (Rs.)
+                </th>
+
+              </tr>
+
+            </thead>
+
+            <tbody>
+              ${projectRows}
+            </tbody>
+
+          </table>
+
+
+          <div class="summary-total">
+
+            <div class="summary-total-box">
+
+              <span>
+                Total Request Amount
+              </span>
+
+              <span>
+                ${money(total)}
+              </span>
+
+            </div>
+
+          </div>
+
+
+          <div class="request-note">
+
+            <strong>Purpose:</strong>
+
+            This request is submitted for release of funds
+            against approved Site Expense vouchers listed
+            in the annexures attached with this request.
+
+          </div>
+
+
+          <div class="signature-area">
+
+
+            <div class="signature-box">
+
+              <div class="signature-line"></div>
+
+              <div class="signature-name">
+                Managing Director Sir
+              </div>
+
+            </div>
+
+
+            <div class="signature-box">
+
+              <div class="signature-line"></div>
+
+              <div class="signature-name">
+                Chairman Sir
+              </div>
+
+            </div>
+
+
+          </div>
+
+
+        </section>
+
+
+        <!-- =================================================
+             PAGE 2 ONWARD
+             PROJECT-WISE ANNEXURES
+        ================================================== -->
+
+        ${annexures}
+
+
+        <script>
+
+          window.onload = function () {
+            window.print();
+          };
+
+        </script>
+
+
+      </body>
+
+      </html>
+    `);
+
+    w.document.close();
+
+    Modal.close();
+
+  } catch (e) {
+    toast(e.message, "err");
+  }
+};
+Views._markFundRequestPrinted = async function (id) {
+  try {
+    if (
+      !confirm(
+        "Mark this fund request as Printed?\n\n" +
+        "Confirm that the paperwork has been physically printed."
+      )
+    ) {
+      return;
+    }
+
+    const result = await api(
+      "POST",
+      `/fund-requests/${encodeURIComponent(id)}/print`,
+    );
+
+    Modal.close();
+
+    toast(
+      `Fund request marked as ${result.status || "Printed"}`,
+      "ok"
+    );
+
+    go("fundRequestsPurchase");
+  } catch (e) {
+    toast(e.message, "err");
+  }
+};
+
+
+Views._printSelectedFundRequests = async function () {
+  const ids = $$(".frp-cb")
+    .filter((cb) => cb.checked)
+    .map((cb) => cb.value);
+
+  if (!ids.length) {
+    toast("Select at least one fund request", "err");
+    return;
+  }
+
+  if (ids.length === 1) {
+    Views._printFundRequest(ids[0]);
+    return;
+  }
+
+  if (
+    !confirm(
+      `Print ${ids.length} fund requests? Each request will be printed separately.`,
+    )
+  ) {
+    return;
+  }
+
+  for (const id of ids) {
+    await Views._printFundRequest(id);
+  }
+};
+
+Views.paymentReceived = async function () {
+  const ex = await api("GET", "/expenses");
+
+  const list = ex.filter(
+    (e) => e.status === "Payment Approved"
+  );
+
+  const total = list.reduce(
+    (s, e) => s + (+e.amount || 0),
+    0
+  );
+
+  const rows =
+    list
+      .map(
+        (e) => `
+        <tr>
+          <td>
+            <input
+              type="checkbox"
+              class="pr-cb"
+              value="${e.id}"
+            >
+          </td>
+
+          <td class="mono">
+            ${esc(e.voucher_no)}
+          </td>
+
+          <td>
+            ${fmtDate(e.date)}
+          </td>
+
+          <td>
+            ${esc((e.details || "").slice(0, 40))}
+          </td>
+
+          <td>
+            ${esc(e.projectCode)}
+          </td>
+
+          <td class="num">
+            ${money(e.amount)}
+          </td>
+
+          <td>
+            ${pill(e.status)}
+          </td>
+
+          <td>
+            <button
+              class="btn btn-ghost btn-sm"
+              onclick="Detail.open('${e.id}')"
+            >
+              View
+            </button>
+          </td>
+        </tr>
+      `,
+      )
+      .join("") ||
+    `
+      <tr>
+        <td colspan="8">
+          <div class="empty">
+            No payments awaiting receipt confirmation.
+          </div>
+        </td>
+      </tr>
+    `;
+
+  $("#content").innerHTML = `
+    <div class="card">
+
+      <div
+        class="card-pad"
+        style="
+          display:flex;
+          align-items:center;
+          justify-content:space-between;
+          border-bottom:1px solid var(--line);
+        "
+      >
+
+        <div>
+          <h3>Payment Received</h3>
+
+          <div class="csub" style="margin:0">
+            ${list.length}
+            voucher(s) awaiting receipt confirmation
+            ·
+            ${money(total)}
+          </div>
+        </div>
+
+        <div style="display:flex;gap:8px">
+
+          <button
+            class="btn btn-ghost"
+            onclick="Views._printPaymentReceived()"
+          >
+            Print Selected
+          </button>
+
+          <button
+            class="btn btn-primary"
+            onclick="Views._confirmPaymentReceived()"
+          >
+            Mark Payment Received
+          </button>
+
+        </div>
+
+      </div>
+
+      <div class="table-wrap">
+        <table>
+
+          <thead>
+            <tr>
+              <th>
+                <input
+                  type="checkbox"
+                  onclick="Views._toggleAllPaymentReceived(this)"
+                >
+              </th>
+
+              <th>Voucher</th>
+              <th>Date</th>
+              <th>Details</th>
+              <th>Project</th>
+              <th class="num">Amount</th>
+              <th>Status</th>
+              <th></th>
+            </tr>
+          </thead>
+
+          <tbody>
+            ${rows}
+          </tbody>
+
+        </table>
+      </div>
+
+    </div>
+  `;
+};
+
+Views._toggleAllPaymentReceived = function (master) {
+  $$(".pr-cb").forEach((cb) => {
+    cb.checked = master.checked;
+  });
+};
+
+Views._confirmPaymentReceived = async function () {
+  const ids = $$(".pr-cb")
+    .filter((cb) => cb.checked)
+    .map((cb) => cb.value);
+
+  if (!ids.length) {
+    toast("Select at least one voucher", "err");
+    return;
+  }
+
+  if (
+    !confirm(
+      `Confirm that payment has been received for ${ids.length} voucher(s)?`
+    )
+  ) {
+    return;
+  }
+
+  try {
+    const r = await api(
+      "POST",
+      "/payments/received",
+      { ids }
+    );
+
+    toast(
+      `${r.received} payment(s) marked as Paid`,
+      "ok"
+    );
+
+    go("paymentReceived");
+  } catch (e) {
+    toast(e.message, "err");
+  }
+};
+Views._printPaymentReceived = async function () {
+  const ids = $$(".pr-cb")
+    .filter((cb) => cb.checked)
+    .map((cb) => cb.value);
+
+  if (!ids.length) {
+    toast("Select at least one voucher", "err");
+    return;
+  }
+
+  const ex = await api("GET", "/expenses");
+
+  const selected = ex.filter(
+    (e) =>
+      ids.includes(e.id) &&
+      e.status === "Payment Approved"
+  );
+
+  if (!selected.length) {
+    toast(
+      "No selected Payment Approved vouchers found",
+      "err"
+    );
+    return;
+  }
+
+  const total = selected.reduce(
+    (s, e) => s + (+e.amount || 0),
+    0
+  );
+
+  const rows = selected
+    .map(
+      (e) => `
+        <tr>
+          <td>${esc(e.voucher_no)}</td>
+          <td>${fmtDate(e.date)}</td>
+          <td>${esc(e.details || "")}</td>
+          <td>${esc(e.projectCode || "")}</td>
+          <td style="text-align:right">
+            ${money(e.amount)}
+          </td>
+          <td>Payment Approved</td>
+        </tr>
+      `
+    )
+    .join("");
+
+  const w = window.open(
+    "",
+    "_blank",
+    "width=1100,height=800"
+  );
+
+  if (!w) {
+    toast(
+      "Please allow pop-ups to print",
+      "err"
+    );
+    return;
+  }
+
+  w.document.write(`
+    <!DOCTYPE html>
+    <html>
+      <head>
+        <title>Payment Approved</title>
+
+        <style>
+          body {
+            font-family: Arial, sans-serif;
+            margin: 35px;
+            color: #111;
+          }
+
+          h1 {
+            margin-bottom: 5px;
+          }
+
+          .sub {
+            color: #666;
+            margin-bottom: 25px;
+          }
+
+          table {
+            width: 100%;
+            border-collapse: collapse;
+          }
+
+          th,
+          td {
+            border: 1px solid #ccc;
+            padding: 9px;
+            text-align: left;
+          }
+
+          th {
+            background: #f3f3f3;
+          }
+
+          .total {
+            margin-top: 20px;
+            text-align: right;
+            font-size: 18px;
+            font-weight: bold;
+          }
+
+          .notice {
+            margin-top: 25px;
+            padding: 12px;
+            border: 1px solid #ccc;
+            background: #fafafa;
+          }
+
+          @media print {
+            body {
+              margin: 15mm;
+            }
+          }
+        </style>
+      </head>
+
+      <body>
+
+        <h1>Payment Approved</h1>
+
+        <div class="sub">
+          Vouchers awaiting Admin confirmation of payment received
+        </div>
+
+        <table>
+          <thead>
+            <tr>
+              <th>Voucher</th>
+              <th>Date</th>
+              <th>Details</th>
+              <th>Project</th>
+              <th>Amount</th>
+              <th>Status</th>
+            </tr>
+          </thead>
+
+          <tbody>
+            ${rows}
+          </tbody>
+        </table>
+
+        <div class="total">
+          Total: ${money(total)}
+        </div>
+
+        <div class="notice">
+          <strong>Payment Status:</strong>
+          Payment Approved
+          <br><br>
+          This document is printed before Admin confirms
+          that the payment has been received.
+        </div>
+
+        <script>
+          window.onload = function () {
+            window.print();
+          };
+        </script>
+
+      </body>
+    </html>
+  `);
+
+  w.document.close();
 };
 
 Views._downloadPayment = function (id) {
@@ -715,7 +2986,10 @@ Views._confirmPay = async function () {
     return;
   try {
     const r = await api("POST", "/payments", { ids });
-    toast(`${r.paid} marked paid`, "ok");
+    toast(
+      `${r.paid} payment(s) confirmed · ${money(r.released)} released`,
+      "ok"
+    );
     go("payments");
   } catch (e) {
     toast(e.message, "err");
@@ -811,7 +3085,14 @@ Views.funds = async function () {
         <div class="stat green"><div class="lab">Received</div><div class="val">${money(t.received)}</div><div class="sub2">from accounts</div></div>
         <div class="stat accent"><div class="lab">Distributed</div><div class="val">${money(t.distributed)}</div><div class="sub2">to sites</div></div>
         <div class="stat blue"><div class="lab">Balance In Hand</div><div class="val" style="color:${t.balance >= 0 ? "var(--green)" : "var(--red)"}">${money(t.balance)}</div><div class="sub2">${money(t.spent)} own spend</div></div>
-      </div>
+        <div className="stat-card">
+            <div className="stat-label">ADMIN WALLET</div>
+            <div className="stat-value">
+              {money(data.adminFund?.available || 0)}
+            </div>
+            <div className="stat-sub">Available to release to projects</div>
+          </div>
+        </div>
       <div class="card" style="margin-bottom:18px"><div class="card-pad" style="display:flex;align-items:center;border-bottom:1px solid var(--line)"><div><h3>By Project</h3><div class="csub" style="margin:0">Received − Distributed = available to distribute</div></div><button class="btn btn-primary btn-sm" style="margin-left:auto" onclick="FundsAdmin.allocate()">+ Allocate to Site</button></div><div class="table-wrap"><table><thead><tr><th>Project</th><th class="num">Received</th><th class="num">Distributed</th><th class="num">Available</th></tr></thead><tbody>${balRows}</tbody></table></div></div>
       <div class="card" style="margin-bottom:18px"><div class="card-pad" style="border-bottom:1px solid var(--line)"><h3>Site Allocations</h3></div><div class="table-wrap"><table><thead><tr><th>Site</th><th class="num">Allocated</th><th class="num">Spent</th><th class="num">Balance</th></tr></thead><tbody>${siteRows}</tbody></table></div></div>
       <div class="card"><div class="card-pad" style="border-bottom:1px solid var(--line)"><h3>Fund Movements</h3></div><div class="table-wrap"><table><thead><tr><th>Date</th><th>Project</th><th>Type</th><th class="num">Amount</th><th>Note</th></tr></thead><tbody>${fundList}</tbody></table></div></div>`;
@@ -820,6 +3101,7 @@ Views.funds = async function () {
   // accounts / admin — project pool view
   const balRows =
     d.balances
+      .filter((b) => b.code !== "ADMIN-FUND")
       .map(
         (b) =>
           `<tr><td><b>${esc(b.code)}</b> · ${esc(b.name)}</td><td class="num mono">${money(b.given)}</td><td class="num mono">${money(b.spent)}</td><td class="num mono ${b.balance >= 0 ? "bal-pos" : "bal-neg"}">${money(b.balance)}</td></tr>`,
@@ -834,13 +3116,37 @@ Views.funds = async function () {
       )
       .join("") ||
     '<tr><td colspan="5"><div class="empty">No funds recorded yet</div></td></tr>';
+  FundsAdmin._adminFundBalance = d.adminFund ? d.adminFund.balance : 0;  
   $("#content").innerHTML = `
-    <div class="grid stat-row" style="margin-bottom:18px">
-      <div class="stat green"><div class="lab">Funds Released</div><div class="val">${money(t.received)}</div><div class="sub2">to projects</div></div>
-      <div class="stat accent"><div class="lab">Spent</div><div class="val">${money(t.spent)}</div><div class="sub2">excludes rejected</div></div>
-      <div class="stat blue"><div class="lab">Balance In Hand</div><div class="val" style="color:${t.balance >= 0 ? "var(--green)" : "var(--red)"}">${money(t.balance)}</div></div>
+        <div class="grid stat-row" style="margin-bottom:18px;grid-template-columns:repeat(4,1fr)">
+      <div class="stat green">
+        <div class="lab">Funds Released</div>
+        <div class="val">${money(t.received)}</div>
+        <div class="sub2">to projects</div>
+      </div>
+
+      <div class="stat accent">
+        <div class="lab">Spent</div>
+        <div class="val">${money(t.spent)}</div>
+        <div class="sub2">excludes rejected</div>
+      </div>
+
+      <div class="stat blue">
+        <div class="lab">Balance In Hand</div>
+        <div class="val" style="color:${t.balance >= 0 ? "var(--green)" : "var(--red)"}">
+          ${money(t.balance)}
+        </div>
+      </div>
+
+      <div class="stat green">
+        <div class="lab">Admin Wallet</div>
+        <div class="val" style="color:${FundsAdmin._adminFundBalance >= 0 ? "var(--green)" : "var(--red)"}">
+          ${money(FundsAdmin._adminFundBalance)}
+        </div>
+        <div class="sub2">available to release</div>
+      </div>
     </div>
-    <div class="card" style="margin-bottom:18px"><div class="card-pad" style="display:flex;align-items:center;border-bottom:1px solid var(--line)"><div><h3>Balance by Project</h3><div class="csub" style="margin:0">Released − Spent</div></div>${can.addFunds() ? `<button class="btn btn-primary btn-sm" style="margin-left:auto" onclick="FundsAdmin.add()">+ Release Funds</button>` : ""}</div><div class="table-wrap"><table><thead><tr><th>Project</th><th class="num">Released</th><th class="num">Spent</th><th class="num">Balance</th></tr></thead><tbody>${balRows}</tbody></table></div></div>
+    <div class="card" style="margin-bottom:18px"><div class="card-pad" style="display:flex;align-items:center;border-bottom:1px solid var(--line)"><div><h3>Balance by Project</h3><div class="csub" style="margin:0">Released − Spent</div></div>${can.addFunds() && d.role === "admin" ? `<button class="btn btn-primary btn-sm" style="margin-left:auto" onclick="FundsAdmin.add()">+ Release Funds</button>` : ""}</div><div class="table-wrap"><table><thead><tr><th>Project</th><th class="num">Released</th><th class="num">Spent</th><th class="num">Balance</th></tr></thead><tbody>${balRows}</tbody></table></div></div>
     <div class="card"><div class="card-pad" style="border-bottom:1px solid var(--line)"><h3>Fund Movements</h3></div><div class="table-wrap"><table><thead><tr><th>Date</th><th>Project</th><th>Type</th><th class="num">Amount</th><th>By</th></tr></thead><tbody>${fundList}</tbody></table></div></div>`;
 };
 
@@ -1555,7 +3861,75 @@ ExpenseForm._editNote = () =>
 const FundsAdmin = {
   add() {
     Modal.open(
-      `<div class="modal-head"><h3>Release Funds to Project</h3><button class="x" onclick="Modal.close()">×</button></div><div class="modal-body"><div class="frow"><div class="field"><label>Project *</label><select id="fd-prj">${S.projects.map((p) => `<option value="${p.id}">${esc(p.code)} · ${esc(p.name)}</option>`).join("")}</select></div><div class="field"><label>Date *</label><input type="date" id="fd-date" value="${new Date().toISOString().slice(0, 10)}"></div></div><div class="field full"><label>Amount (₹) *</label><input type="number" id="fd-amt" step="0.01" min="0"></div><div class="field full"><label>Note</label><input id="fd-note" placeholder="e.g. bank transfer ref"></div></div><div class="modal-foot"><button class="btn btn-ghost" onclick="Modal.close()">Cancel</button><button class="btn btn-primary" onclick="FundsAdmin.save()">Save</button></div>`,
+      `<div class="modal-head">
+        <h3>Release Funds to Project</h3>
+        <button class="x" onclick="Modal.close()">×</button>
+      </div>
+      <div class="modal-body">
+
+        <div class="card" style="margin-bottom:16px;background:var(--green-soft);border:0">
+          <div class="card-pad">
+            <div class="lab">Admin Fund Balance</div>
+            <div class="val" style="font-size:24px;color:var(--green)">
+              ${money(FundsAdmin._adminFundBalance || 0)}
+            </div>
+            <div class="csub" style="margin:0">
+              Available to release to projects
+            </div>
+          </div>
+        </div>
+
+        <div class="frow">
+          <div class="field">
+            <label>Project *</label>
+            <select id="fd-prj">
+              ${S.projects
+                .filter((p) => p.code !== "ADMIN-FUND")
+                .map(
+                  (p) =>
+                    `<option value="${p.id}">
+                      ${esc(p.code)} · ${esc(p.name)}
+                    </option>`,
+                )
+                .join("")}
+            </select>
+          </div>
+
+          <div class="field">
+            <label>Date *</label>
+            <input
+              type="date"
+              id="fd-date"
+              value="${new Date().toISOString().slice(0, 10)}"
+            >
+          </div>
+        </div>
+
+        <div class="field full">
+          <label>Amount (₹) *</label>
+          <input
+            type="number"
+            id="fd-amt"
+            step="0.01"
+            min="0"
+            max="${FundsAdmin._adminFundBalance || 0}"
+          >
+        </div>
+
+        <div class="field full">
+          <label>Note</label>
+          <input
+            id="fd-note"
+            placeholder="e.g. transfer to project"
+          >
+        </div>
+
+      </div>
+
+      <div class="modal-foot">
+        <button class="btn btn-ghost" onclick="Modal.close()">Cancel</button>
+        <button class="btn btn-primary" onclick="FundsAdmin.save()">Release Funds</button>
+      </div>`,
     );
   },
   async save() {
@@ -1565,14 +3939,29 @@ const FundsAdmin = {
       amount: $("#fd-amt").value,
       note: $("#fd-note").value.trim(),
     };
+
     if (!body.projectId || !body.date || !body.amount) {
       toast("Project, date and amount required", "err");
       return;
     }
+
+    const amount = Number(body.amount);
+
+    if (!Number.isFinite(amount) || amount <= 0) {
+      toast("Enter a valid amount", "err");
+      return;
+    }
+
+    if (amount > (FundsAdmin._adminFundBalance || 0)) {
+      toast("Amount exceeds Admin Fund balance", "err");
+      return;
+    }
+
     try {
       await api("POST", "/funds", body);
+
       Modal.close();
-      toast("Funds recorded", "ok");
+      toast("Funds released to project", "ok");
       go("funds");
     } catch (e) {
       toast(e.message, "err");

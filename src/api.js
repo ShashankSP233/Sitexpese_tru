@@ -5,7 +5,7 @@ const path = require('path');
 const fs = require('fs');
 const bcrypt = require('bcryptjs');
 const {ZipArchive} = require('archiver');
-const { db, uid, now, loadUser, scopeOf, nextVoucher, logAudit, addHistory, toPaise, toRupees } = require('./db');
+const { db, uid, now, loadUser, scopeOf, nextVoucher, nextFundRequest, logAudit, addHistory, toPaise, toRupees } = require('./db');
 
 const router = express.Router();
 const UP_DIR = path.join(__dirname, '..', 'uploads');
@@ -690,15 +690,157 @@ router.get('/funds', async (req, res) => {
     return { projectId: pid, code: p.code, name: p.name, given, spent, balance: given - spent };
   });
   const totals = balances.reduce((a, b) => ({ received: a.received + b.given, spent: a.spent + b.spent, balance: a.balance + b.balance }), { received: 0, spent: 0, balance: 0 });
-  res.json({ role, totals, balances, funds: decoRows });
+    // ADMIN FUND -- separate wallet balance
+  let adminFund = null;
+
+  const adminFundProject = await db.prepare(`
+    SELECT id
+    FROM projects
+    WHERE code = 'ADMIN-FUND'
+    LIMIT 1
+  `).get();
+
+  if (adminFundProject) {
+    const receivedRow = await db.prepare(`
+      SELECT COALESCE(SUM(amount), 0) v
+      FROM funds
+      WHERE project_id = ?
+        AND kind = 'injection'
+    `).get(adminFundProject.id);
+
+    const releasedRow = await db.prepare(`
+      SELECT COALESCE(SUM(amount), 0) v
+      FROM funds
+      WHERE project_id = ?
+        AND kind = 'allocation'
+    `).get(adminFundProject.id);
+
+    adminFund = {
+      projectId: adminFundProject.id,
+      received: toRupees(receivedRow.v),
+      released: toRupees(releasedRow.v),
+      balance:
+        toRupees(receivedRow.v) -
+        toRupees(releasedRow.v)
+    };
+  }
+  res.json({
+    role,
+    totals,
+    balances,
+    funds: decoRows,
+    adminFund
+  });
 });
-router.post('/funds', requireRole('admin', 'accounts'), async (req, res) => {
+
+
+router.post('/funds', requireRole('admin'), async (req, res) => {
   const { projectId, amount, date, note } = req.body;
-  if (!projectId || !amount || !date) return res.status(400).json({ error: 'Project, amount and date required' });
-  if (!inScope(req.user, projectId)) return res.status(403).json({ error: 'Project not in your access' });
-  await db.prepare("INSERT INTO funds (id,project_id,amount,date,note,added_by,created_at,kind,to_user) VALUES (?,?,?,?,?,?,?,'injection',NULL)")
-    .run(uid(), projectId, toPaise(amount), date, note || null, req.user.id, now());
-  await logAudit(req.user, 'Released funds to project', 'funds', projectId, '₹' + amount);
+
+  if (!projectId || !amount || !date) {
+    return res.status(400).json({
+      error: 'Project, amount and date required'
+    });
+  }
+
+  if (!inScope(req.user, projectId)) {
+    return res.status(403).json({
+      error: 'Project not in your access'
+    });
+  }
+
+  const amountPaise = toPaise(amount);
+
+  if (amountPaise <= 0) {
+    return res.status(400).json({
+      error: 'Amount must be greater than zero'
+    });
+  }
+
+  await db.transaction(async () => {
+    // ADMIN-FUND is the Admin wallet.
+    const adminFund = await db.prepare(`
+      SELECT id
+      FROM projects
+      WHERE code = 'ADMIN-FUND'
+      LIMIT 1
+    `).get();
+
+    if (!adminFund) {
+      throw new Error('ADMIN-FUND project is missing');
+    }
+
+    // Never allow ADMIN-FUND itself as a transfer destination.
+    if (projectId === adminFund.id) {
+      throw new Error('Cannot release funds to ADMIN-FUND');
+    }
+
+    // Check current Admin wallet balance.
+    const receivedRow = await db.prepare(`
+      SELECT COALESCE(SUM(amount), 0) v
+      FROM funds
+      WHERE project_id = ?
+        AND kind = 'injection'
+    `).get(adminFund.id);
+
+    const releasedRow = await db.prepare(`
+      SELECT COALESCE(SUM(amount), 0) v
+      FROM funds
+      WHERE project_id = ?
+        AND kind = 'allocation'
+    `).get(adminFund.id);
+
+    const available = receivedRow.v - releasedRow.v;
+
+    if (amountPaise > available) {
+      throw new Error(
+        `Only ₹${toRupees(available)} is available in Admin Fund`
+      );
+    }
+
+    const createdAt = now();
+
+    // 1. Remove money from ADMIN-FUND.
+    await db.prepare(`
+      INSERT INTO funds
+        (id, project_id, amount, date, note, added_by, created_at, kind, to_user)
+      VALUES
+        (?,?,?,?,?,?,?,'allocation',NULL)
+    `).run(
+      uid(),
+      adminFund.id,
+      amountPaise,
+      date,
+      note || `Released to project ${projectId}`,
+      req.user.id,
+      createdAt
+    );
+
+    // 2. Put the same money into the selected project.
+    await db.prepare(`
+      INSERT INTO funds
+        (id, project_id, amount, date, note, added_by, created_at, kind, to_user)
+      VALUES
+        (?,?,?,?,?,?,?,'injection',NULL)
+    `).run(
+      uid(),
+      projectId,
+      amountPaise,
+      date,
+      note || `Received from Admin Fund`,
+      req.user.id,
+      createdAt
+    );
+
+    await logAudit(
+      req.user,
+      'Released funds to project',
+      'funds',
+      projectId,
+      `₹${amount} from ADMIN-FUND`
+    );
+  });
+
   res.json({ ok: true });
 });
 
@@ -926,23 +1068,159 @@ router.post('/payments/download', requireRole('accounts', 'admin'), async (req, 
 });
 
 // ================================================================ PAYMENTS
-// P31 -- Accounts confirms payment on approved vouchers; paid ones leave the Approved Payments tab
+
+// Accounts confirms that payment has been processed.
+// IMPORTANT:
+// expenses.paid is NOT changed here.
+// That field represents the creator's original Paid/Unpaid selection.
+//
+// Workflow:
+// Approved -> Payment Approved
 router.post('/payments', requireRole('accounts', 'admin'), async (req, res) => {
   const ids = Array.isArray(req.body.ids) ? req.body.ids : [];
-  if (!ids.length) return res.status(400).json({ error: 'No vouchers selected' });
-  let paid = 0;
-  for (const id of ids) {
-    const e = await db.prepare('SELECT * FROM expenses WHERE id=?').get(id);
-    if (!e || e.status !== 'Approved' || e.paid || !canSeeExpense(req.user, e)) continue;
-    await db.prepare("UPDATE expenses SET paid=1,paid_at=?,paid_by=? WHERE id=? AND status='Approved' AND COALESCE(paid,0)=0")
-      .run(now(), req.user.id, id);
-    await addHistory(id, req.user.id, 'Payment confirmed', 'Marked as paid');
-    await logAudit(req.user, 'Confirmed payment', 'expense', e.voucher_no, '₹' + toRupees(e.amount));
-    paid++;
+
+  if (!ids.length) {
+    return res.status(400).json({ error: 'No vouchers selected' });
   }
-  res.json({ ok: true, paid });
+
+  let confirmed = 0;
+
+  for (const id of ids) {
+    const e = await db.prepare(
+      'SELECT * FROM expenses WHERE id=?'
+    ).get(id);
+
+    if (
+      !e ||
+      e.status !== 'Approved' ||
+      !canSeeExpense(req.user, e)
+    ) {
+      continue;
+    }
+
+    const paymentTime = now();
+    const paymentDate = new Date(paymentTime)
+    .toISOString()
+    .slice(0, 10);
+
+    // IMPORTANT:
+    // DO NOT change expenses.paid here.
+    //
+    // expenses.paid = creator's original Paid/Unpaid selection.
+    //
+    // status = company payment workflow.
+    await db.prepare(`
+      UPDATE expenses
+      SET
+        status='Payment Approved',
+        payment_status='Payment Approved',
+        paid_at=?,
+        paid_by=?
+      WHERE id=?
+        AND status='Approved'
+    `).run(
+      paymentTime,
+      req.user.id,
+      id
+    );
+
+    await addHistory(
+      id,
+      req.user.id,
+      'Payment approved',
+      'Accounts confirmed payment; voucher is now eligible for fund request'
+    );
+
+    await logAudit(
+      req.user,
+      'Payment approved',
+      'expense',
+      e.voucher_no,
+      '₹' + toRupees(e.amount)
+    );
+
+    confirmed++;
+  }
+
+  res.json({
+    ok: true,
+    paid: confirmed,
+  });
 });
 
+
+
+// Admin confirms that the payment has actually been received.
+//
+// Workflow:
+// Payment Approved -> Paid
+//
+// IMPORTANT:
+// expenses.paid is NOT changed.
+// It remains the creator's original Paid/Unpaid selection.
+router.post(
+  '/payments/received',
+  requireRole('admin'),
+  async (req, res) => {
+    const ids = Array.isArray(req.body.ids) ? req.body.ids : [];
+
+    if (!ids.length) {
+      return res.status(400).json({ error: 'No vouchers selected' });
+    }
+
+    let received = 0;
+
+    for (const id of ids) {
+      const e = await db.prepare(
+        'SELECT * FROM expenses WHERE id=?'
+      ).get(id);
+
+      if (
+        !e ||
+        e.status !== 'Payment Approved' ||
+        !canSeeExpense(req.user, e)
+      ) {
+        continue;
+      }
+
+      const receivedTime = now();
+
+      // Final company payment state.
+      //
+      // DO NOT change e.paid.
+      await db.prepare(`
+        UPDATE expenses
+        SET
+          status='Paid',
+          payment_status='Paid'
+        WHERE id=?
+          AND status='Payment Approved'
+      `).run(id);
+
+      await addHistory(
+        id,
+        req.user.id,
+        'Payment received',
+        'Admin confirmed that the payment was received'
+      );
+
+      await logAudit(
+        req.user,
+        'Confirmed payment received',
+        'expense',
+        e.voucher_no,
+        '₹' + toRupees(e.amount)
+      );
+
+      received++;
+    }
+
+    res.json({
+      ok: true,
+      received
+    });
+  }
+);
 // ================================================================ BUDGETS (#9 -- accounts/admin)
 router.get('/budgets', requireRole('accounts', 'admin'), async (req, res) => {
   const m = await nameMaps();
@@ -1060,5 +1338,549 @@ router.get('/analytics', requireRole('accounts', 'admin'), async (req, res) => {
 router.get('/audit', requireRole('admin'), async (req, res) => {
   res.json(await db.prepare('SELECT * FROM audit ORDER BY at DESC LIMIT 500').all());
 });
+
+router.get(
+  '/fund-requests/eligible',
+  requireRole('admin'),
+  async (req, res) => {
+    const m = await nameMaps();
+    const sc = scopeClause(req.user, 'e');
+
+    const params = [...sc.params];
+
+    const rows = await db.prepare(`
+      SELECT
+        e.*
+      FROM expenses e
+      WHERE e.status = 'Payment Approved'
+        ${sc.where}
+        AND NOT EXISTS (
+          SELECT 1
+          FROM fund_request_items fri
+          JOIN fund_requests fr
+            ON fr.id = fri.fund_request_id
+          WHERE fri.expense_id = e.id
+            AND fr.status NOT IN ('Completed', 'Cancelled')
+        )
+      ORDER BY e.date DESC, e.created_at DESC
+    `).all(...params);
+
+    const result = rows.map(e => ({
+      ...e,
+      projectCode: m.proj[e.project_id]?.code || '',
+      projectName: m.proj[e.project_id]?.name || '',
+      locationName: m.loc[e.location_id] || '',
+      categoryName: m.cat[e.category_id] || '',
+      createdByName: m.usr[e.created_by] || '',
+      amount: toRupees(e.amount)
+    }));
+
+    res.json(result);
+  }
+);
+
+router.get(
+  '/fund-requests',
+  requireRole('purchase', 'admin', 'accounts'),
+  async (req, res) => {
+    const rows = await db.prepare(`
+      SELECT
+        fr.*,
+        u.name AS created_by_name,
+        COUNT(fri.id) AS item_count
+      FROM fund_requests fr
+      JOIN users u
+        ON u.id = fr.created_by
+      LEFT JOIN fund_request_items fri
+        ON fri.fund_request_id = fr.id
+      GROUP BY fr.id, u.name
+      ORDER BY fr.created_at DESC
+    `).all();
+
+    res.json(rows.map(r => ({
+      ...r,
+      total: toRupees(r.total_amount),
+      itemCount: Number(r.item_count || 0),
+    })));
+  }
+);
+
+router.get(
+  '/fund-requests/:id',
+  requireRole('purchase', 'admin' , 'accounts'),
+  async (req, res) => {
+    const request = await db.prepare(`
+      SELECT
+        fr.*,
+        u.name AS created_by_name
+      FROM fund_requests fr
+      JOIN users u
+        ON u.id = fr.created_by
+      WHERE fr.id = ?
+    `).get(req.params.id);
+
+    if (!request) {
+      return res.status(404).json({
+        error: 'Fund request not found'
+      });
+    }
+
+    const m = await nameMaps();
+
+    const items = await db.prepare(`
+      SELECT
+        fri.id AS item_id,
+        fri.amount AS requested_amount,
+        e.*
+      FROM fund_request_items fri
+      JOIN expenses e
+        ON e.id = fri.expense_id
+      WHERE fri.fund_request_id = ?
+      ORDER BY e.date DESC, e.created_at DESC
+    `).all(req.params.id);
+
+    const itemsWithHistory = await Promise.all(
+      items.map(async (e) => {
+        const historyRows = await db.prepare(`
+          SELECT
+            eh.*,
+            u.name AS by_name
+          FROM expense_history eh
+          LEFT JOIN users u
+            ON u.id = eh.by_user
+          WHERE eh.expense_id = ?
+          ORDER BY eh.at ASC
+        `).all(e.id);
+
+        return {
+          ...e,
+
+          history: historyRows.map(h => ({
+            ...h,
+            byName: h.by_name || '—'
+          }))
+        };
+      })
+    );
+
+    res.json({
+      ...request,
+      total: toRupees(request.total_amount),
+      items: itemsWithHistory.map(e => ({
+        ...e,
+
+        amount: toRupees(e.requested_amount),
+
+        projectCode:
+          m.proj[e.project_id]?.code || '',
+
+        projectName:
+          m.proj[e.project_id]?.name || '',
+
+        locationName:
+          m.loc[e.location_id] || '',
+
+        categoryName:
+          m.cat[e.category_id] || '',
+
+        createdByName:
+          m.usr[e.created_by] || '',
+      }))
+    });
+  }
+);
+
+router.post(
+  '/fund-requests/:id/print',
+  requireRole('purchase', 'admin'),
+  async (req, res) => {
+    const result = await db.transaction(async () => {
+      const request = await db.prepare(`
+        SELECT *
+        FROM fund_requests
+        WHERE id = ?
+        FOR UPDATE
+      `).get(req.params.id);
+
+      if (!request) {
+        throw new Error('Fund request not found');
+      }
+
+      if (['Completed', 'Cancelled'].includes(request.status)) {
+        throw new Error(
+          `Cannot print a ${request.status.toLowerCase()} fund request`
+        );
+      }
+
+      const printedAt = now();
+
+      await db.prepare(`
+        UPDATE fund_requests
+        SET
+          printed_at = ?,
+          printed_by = ?,
+          status = 'Printed'
+        WHERE id = ?
+      `).run(
+        printedAt,
+        req.user.id,
+        request.id
+      );
+
+      await logAudit(
+        req.user,
+        'Printed fund request',
+        'fund_request',
+        request.request_no,
+        `Fund request paperwork printed`
+      );
+
+      return {
+        printedAt,
+        status: 'Printed'
+      };
+    });
+
+    res.json({
+      ok: true,
+      ...result
+    });
+  }
+);
+
+router.post(
+  '/fund-requests',
+  requireRole('admin'),
+  async (req, res) => {
+    const ids = Array.isArray(req.body.ids)
+      ? [...new Set(req.body.ids.map(String).filter(Boolean))]
+      : [];
+
+    if (!ids.length) {
+      return res.status(400).json({
+        error: 'No vouchers selected'
+      });
+    }
+
+    const result = await db.transaction(async () => {
+      const placeholders = ids.map(() => '?').join(',');
+
+      const expenses = await db.prepare(`
+        SELECT *
+        FROM expenses
+        WHERE id IN (${placeholders})
+          AND status = 'Payment Approved'
+        FOR UPDATE
+      `).all(...ids);
+
+      if (expenses.length !== ids.length) {
+        throw new Error(
+          'One or more selected vouchers are no longer available for fund request'
+        );
+      }
+
+      for (const e of expenses) {
+        const existing = await db.prepare(`
+          SELECT fri.id
+          FROM fund_request_items fri
+          JOIN fund_requests fr
+            ON fr.id = fri.fund_request_id
+          WHERE fri.expense_id = ?
+            AND fr.status NOT IN ('Completed', 'Cancelled')
+          LIMIT 1
+        `).get(e.id);
+
+        if (existing) {
+          throw new Error(
+            `Voucher ${e.voucher_no} is already included in a fund request`
+          );
+        }
+      }
+
+      const requestId = uid();
+      const requestNo = await nextFundRequest();
+      const createdAt = now();
+
+      const total = expenses.reduce(
+        (sum, e) => sum + Number(e.amount || 0),
+        0
+      );
+
+      await db.prepare(`
+        INSERT INTO fund_requests
+          (
+            id,
+            request_no,
+            created_by,
+            created_at,
+            status,
+            total_amount
+          )
+        VALUES (?, ?, ?, ?, 'Requested', ?)
+      `).run(
+        requestId,
+        requestNo,
+        req.user.id,
+        createdAt,
+        total
+      );
+
+      for (const e of expenses) {
+        await db.prepare(`
+          INSERT INTO fund_request_items
+            (
+              id,
+              fund_request_id,
+              expense_id,
+              amount
+            )
+          VALUES (?, ?, ?, ?)
+        `).run(
+          uid(),
+          requestId,
+          e.id,
+          e.amount
+        );
+      }
+
+      for (const e of expenses) {
+        await addHistory(
+          e.id,
+          req.user.id,
+          'Fund requested',
+          `Included in ${requestNo}`
+        );
+      }
+
+      await logAudit(
+        req.user,
+        'Created fund request',
+        'fund_request',
+        requestNo,
+        `${expenses.length} voucher(s) · ₹${toRupees(total)}`
+      );
+
+      return {
+        id: requestId,
+        requestNo,
+        count: expenses.length,
+        total: toRupees(total)
+      };
+    });
+
+    res.json({
+      ok: true,
+      ...result
+    });
+  }
+);
+
+// ================================================================
+// FUND REQUEST RELEASE
+//
+// Accounts performs the actual money release.
+// This is the ONLY step in the new workflow that:
+//   - marks the voucher Paid
+//   - marks payment_status as Paid
+//   - records the released money in ADMIN-FUND
+//
+// expenses.paid is NOT changed here.
+// It remains the creator's original Paid/Unpaid selection.
+//
+// Workflow:
+// Payment Approved
+//      ↓
+// Fund Requested
+//      ↓
+// Printed
+//      ↓
+// Payment Released
+//      ↓
+// Paid
+
+router.post(
+  '/fund-requests/:id/release',
+  requireRole('accounts'),
+  async (req, res) => {
+    const result = await db.transaction(async () => {
+
+      // Lock the fund request so two Accounts users cannot
+      // release the same request simultaneously.
+      const request = await db.prepare(`
+        SELECT *
+        FROM fund_requests
+        WHERE id = ?
+        FOR UPDATE
+      `).get(req.params.id);
+
+      if (!request) {
+        throw new Error('Fund request not found');
+      }
+
+      if (request.status !== 'Printed') {
+        throw new Error(
+          `Only Printed fund requests can be released (current status: ${request.status})`
+        );
+      }
+
+      // Get all vouchers belonging to this request.
+      const items = await db.prepare(`
+        SELECT
+          fri.id AS item_id,
+          fri.amount AS requested_amount,
+          e.*
+        FROM fund_request_items fri
+        JOIN expenses e
+          ON e.id = fri.expense_id
+        WHERE fri.fund_request_id = ?
+        FOR UPDATE
+      `).all(request.id);
+
+      if (!items.length) {
+        throw new Error('Fund request contains no vouchers');
+      }
+
+      // Make sure every voucher is still valid.
+      for (const e of items) {
+
+        if (e.status !== 'Payment Approved') {
+          throw new Error(
+            `${e.voucher_no} is no longer Payment Approved`
+          );
+        }
+
+        if (!canSeeExpense(req.user, e)) {
+          throw new Error(
+            `Voucher ${e.voucher_no} is outside your project access`
+          );
+        }
+
+        
+      }
+
+      const releasedAt = now();
+
+      /*
+       * Mark every voucher as actually paid.
+       */
+      for (const e of items) {
+
+        await db.prepare(`
+          UPDATE expenses
+          SET
+            status = 'Paid',
+            payment_status = 'Paid',
+            updated_at = ?
+          WHERE id = ?
+            AND status = 'Payment Approved'
+        `).run(
+          releasedAt,
+          e.id
+        );
+
+        await addHistory(
+          e.id,
+          req.user.id,
+          'Payment Released',
+          `Fund request ${request.request_no} released`
+        );
+
+        await logAudit(
+          req.user,
+          'Payment Released',
+          'expense',
+          e.voucher_no,
+          `Fund request ${request.request_no} · ₹${toRupees(e.amount)}`
+        );
+
+        /*
+         * The funds table represents actual allocation/release.
+         *
+         * One allocation is created per voucher so that the ledger
+         * remains traceable back to the individual voucher.
+         *
+         * request.created_by is the Admin who created the request
+         * (Vipul Sir in the intended workflow).
+         */
+        // Payment released by Accounts goes into the Admin wallet.
+        // ADMIN-FUND is the central wallet used by Admin to
+        // subsequently distribute money to projects.
+        const adminFund = await db.prepare(`
+          SELECT id
+          FROM projects
+          WHERE code = 'ADMIN-FUND'
+          LIMIT 1
+        `).get();
+
+        if (!adminFund) {
+          throw new Error('ADMIN-FUND project is missing');
+        }
+
+        await db.prepare(`
+          INSERT INTO funds
+            (
+              id,
+              project_id,
+              amount,
+              date,
+              note,
+              added_by,
+              created_at,
+              kind,
+              to_user
+            )
+          VALUES
+            (?,?,?,?,?,?,?,'injection',NULL)
+        `).run(
+          uid(),
+          adminFund.id,
+          e.amount,
+          new Date(releasedAt).toISOString().slice(0, 10),
+          `Fund release ${request.request_no} · ${e.voucher_no}`,
+          req.user.id,
+          releasedAt
+        );
+      }
+
+      /*
+       * Complete the fund request only after every voucher
+       * and every funds ledger entry succeeded.
+       */
+      await db.prepare(`
+        UPDATE fund_requests
+        SET
+          status = 'Completed',
+          released_at = ?,
+          released_by = ?
+        WHERE id = ?
+          AND status = 'Printed'
+      `).run(
+        releasedAt,
+        req.user.id,
+        request.id
+      );
+
+      await logAudit(
+        req.user,
+        'Released fund request',
+        'fund_request',
+        request.request_no,
+        `₹${toRupees(request.total_amount)} · ${items.length} voucher(s)`
+      );
+
+      return {
+        requestNo: request.request_no,
+        total: toRupees(request.total_amount),
+        count: items.length,
+        releasedAt
+      };
+    });
+
+    res.json({
+      ok: true,
+      ...result
+    });
+  }
+);
 
 module.exports = router;

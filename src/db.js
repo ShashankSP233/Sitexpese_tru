@@ -201,6 +201,48 @@ CREATE TABLE IF NOT EXISTS funds (
   FOREIGN KEY (added_by) REFERENCES users(id) ON DELETE RESTRICT,
   FOREIGN KEY (to_user) REFERENCES users(id) ON DELETE RESTRICT
 );
+CREATE TABLE IF NOT EXISTS fund_requests (
+  id TEXT PRIMARY KEY,
+  request_no TEXT UNIQUE NOT NULL,
+  created_by TEXT NOT NULL,
+  created_at BIGINT NOT NULL,
+  status TEXT NOT NULL DEFAULT 'Requested',
+  total_amount BIGINT NOT NULL DEFAULT 0,
+  printed_at BIGINT,
+  printed_by TEXT,
+  released_at BIGINT,
+  released_by TEXT,
+  FOREIGN KEY (created_by) REFERENCES users(id) ON DELETE RESTRICT,
+  FOREIGN KEY (printed_by) REFERENCES users(id) ON DELETE RESTRICT,
+  FOREIGN KEY (released_by) REFERENCES users(id) ON DELETE RESTRICT
+);
+
+CREATE TABLE IF NOT EXISTS fund_request_items (
+  id TEXT PRIMARY KEY,
+  fund_request_id TEXT NOT NULL,
+  expense_id TEXT NOT NULL,
+  amount BIGINT NOT NULL,
+  FOREIGN KEY (fund_request_id)
+    REFERENCES fund_requests(id)
+    ON DELETE CASCADE,
+  FOREIGN KEY (expense_id)
+    REFERENCES expenses(id)
+    ON DELETE RESTRICT,
+  UNIQUE(fund_request_id, expense_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_fund_requests_status
+  ON fund_requests(status);
+
+CREATE INDEX IF NOT EXISTS idx_fund_requests_created_by
+  ON fund_requests(created_by);
+
+CREATE INDEX IF NOT EXISTS idx_fund_request_items_request
+  ON fund_request_items(fund_request_id);
+
+CREATE INDEX IF NOT EXISTS idx_fund_request_items_expense
+  ON fund_request_items(expense_id);
+
 CREATE TABLE IF NOT EXISTS queries (
   id TEXT PRIMARY KEY,
   expense_id TEXT NOT NULL,
@@ -327,6 +369,26 @@ async function nextVoucher() {
   }));
 }
 
+async function nextFundRequest() {
+  const c = await db.prepare(
+    "SELECT seq FROM counters WHERE name='fund_request'"
+  ).get();
+
+  const next = (c ? c.seq : 0) + 1;
+
+  if (c) {
+    await db.prepare(
+      "UPDATE counters SET seq=? WHERE name='fund_request'"
+    ).run(next);
+  } else {
+    await db.prepare(
+      "INSERT INTO counters (name, seq) VALUES ('fund_request', ?)"
+    ).run(next);
+  }
+
+  return 'FR-' + String(next).padStart(4, '0');
+}
+
 async function logAudit(user, action, entity, entityId, detail) {
   await db.prepare('INSERT INTO audit (id,at,user_id,user_name,role,action,entity,entity_id,detail) VALUES (?,?,?,?,?,?,?,?,?)')
     .run(uid(), now(), user ? user.id : null, user ? user.name : null, user ? user.role : null,
@@ -343,4 +405,4 @@ async function ready() {
   await seed();
 }
 
-module.exports = { db, uid, now, loadUser, scopeOf, nextVoucher, logAudit, addHistory, toPaise, toRupees, ready, pool };
+module.exports = { db, uid, now, loadUser, scopeOf, nextVoucher, nextFundRequest, logAudit, addHistory, toPaise, toRupees, ready, pool };
