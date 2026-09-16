@@ -60,7 +60,7 @@ a loader like `dotenv` works too (not included here, to keep dependencies minima
 | checker | check123 | Checker | all projects |
 | purchase | pur123 | Purchase Reviewer | all projects |
 | operations | ops123 | Operations Reviewer | all projects |
-| accounts | acc123 | Accounts Reviewer | all projects |
+| accounts | acc123 | Accounts Manager | all projects |
 
 > ⚠️ **Before real use:** these passwords are fixed in the source and documented here,
 > so they must not stay active on a server real people can reach. Sign in as `admin` →

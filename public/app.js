@@ -42,7 +42,8 @@ const ROLES = {
   checker: "Checker",
   purchase: "Purchase Reviewer",
   operations: "Operations Reviewer",
-  accounts: "Accounts Reviewer",
+  accounts: "Accounts Manager",
+  account_checker: "Account Checker",
 };
 const PILL = {
   Draft: "p-draft",
@@ -155,7 +156,7 @@ async function boot() {
 const can = {
   create: () => ["site", "checker", "admin"].includes(S.user.role),
   review: () =>
-    ["checker", "purchase", "operations", "accounts", "admin"].includes(
+    ["checker", "purchase", "operations", "accounts", "account_checker", "admin"].includes(
       S.user.role,
     ),
   admin: () => S.user.role === "admin",
@@ -170,9 +171,9 @@ const can = {
   fundsRelease: () => S.user.role === "accounts",
 
   analytics: () => ["accounts", "admin"].includes(S.user.role),
-  funds: () => !["site", "purchase", "operations"].includes(S.user.role),
+  funds: () => ["site", "checker", "accounts", "admin"].includes(S.user.role),
   reports: () =>
-    !["site", "checker", "purchase", "operations"].includes(S.user.role),
+    ["accounts", "admin"].includes(S.user.role),
   reviewTab: () => can.review() && S.user.role !== "checker",
   reviewOnly: () => ["purchase", "operations"].includes(S.user.role),
 };
@@ -187,6 +188,8 @@ function pendingForMe(list) {
     return list.filter((e) =>
       ["Operations Reviewed", "Accounts Reviewed"].includes(e.status),
     );
+  if (r === "account_checker")
+    return list.filter((e) => e.status === "Operations Reviewed");
   if (r === "admin")
     return list.filter((e) =>
       [
@@ -439,7 +442,7 @@ const Views = {};
 Views.dashboard = async function () {
   const [ex, fundsData] = await Promise.all([
     api("GET", "/expenses"),
-    api("GET", "/funds"),
+    can.funds() ? api("GET", "/funds") : Promise.resolve({ totals: {} }),
   ]);
   const total = ex.reduce((s, e) => s + (+e.amount || 0), 0);
   // P5/18 — "In Review" reflects only vouchers that currently have an active (open) query
@@ -2550,7 +2553,7 @@ Views._printFundRequest = async function (id) {
                 </div>
 
                 <div class="digital-signature-role">
-                  Accounts Reviewer
+                  Accounts Manager
                 </div>
 
               </div>
@@ -3232,6 +3235,7 @@ Views.review = async function () {
       purchase: "Checked items awaiting purchase review.",
       operations: "Purchase-reviewed items awaiting operations review.",
       accounts: "Items awaiting accounts review / approval.",
+      account_checker: "Items awaiting Level 4 accounts review.",
       admin: "All items in the review pipeline.",
     }[S.user.role] || "";
   $("#content").innerHTML =
@@ -3861,7 +3865,10 @@ const Detail = {
       a.push(
         `<button class="btn btn-primary btn-sm" onclick="Detail.advance('${e.id}','operations')">✓ Review (Operations)</button>`,
       );
-    if (s === "Operations Reviewed" && (r === "accounts" || admin))
+    if (
+      s === "Operations Reviewed" &&
+      (["accounts", "account_checker"].includes(r) || admin)
+    )
       a.push(
         `<button class="btn btn-primary btn-sm" onclick="Detail.advance('${e.id}','accounts')">✓ Review (Accounts)</button>`,
       );

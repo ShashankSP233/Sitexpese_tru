@@ -497,7 +497,7 @@ const FLOW = {
   check:      { from: 'Submitted',           to: 'Checked',             role: 'checker',    key: 'check',      label: 'Checked' },
   purchase:   { from: 'Checked',             to: 'Purchase Reviewed',   role: 'purchase',   key: 'purchase',   label: 'Reviewed by Purchase' },
   operations: { from: 'Purchase Reviewed',   to: 'Operations Reviewed', role: 'operations', key: 'operations', label: 'Reviewed by Operations' },
-  accounts:   { from: 'Operations Reviewed', to: 'Accounts Reviewed',   role: 'accounts',   key: 'accounts',   label: 'Reviewed by Accounts' },
+  accounts:   { from: 'Operations Reviewed', to: 'Accounts Reviewed',   roles: ['accounts', 'account_checker'], key: 'accounts', label: 'Reviewed by Accounts' },
   approve:    { from: 'Accounts Reviewed',   to: 'Approved',            role: 'accounts',   key: 'approved',   label: 'Approved' },
 };
 router.post('/expenses/:id/advance/:step', async (req, res) => {
@@ -505,8 +505,11 @@ router.post('/expenses/:id/advance/:step', async (req, res) => {
   if (!step) return res.status(400).json({ error: 'Unknown step' });
   const e = await db.prepare('SELECT * FROM expenses WHERE id=?').get(req.params.id);
   if (!e) return res.status(404).json({ error: 'Not found' });
-  if (req.user.role !== step.role && req.user.role !== 'admin')
-    return res.status(403).json({ error: `Only ${step.role} can do this step` });
+  const stepAllowed = step.roles
+    ? step.roles.includes(req.user.role)
+    : req.user.role === step.role;
+  if (!stepAllowed && req.user.role !== 'admin')
+    return res.status(403).json({ error: `Only ${step.roles ? step.roles.join(' or ') : step.role} can do this step` });
   if (!inScope(req.user, e.project_id)) return res.status(403).json({ error: 'Project not in your access' });
   if (e.status !== step.from)
     return res.status(409).json({ error: `Voucher must be "${step.from}" first (it is "${e.status}")` });
@@ -529,7 +532,7 @@ router.post('/expenses/:id/advance/:step', async (req, res) => {
   res.json({ ok: true, status: step.to });
 });
 
-router.post('/expenses/:id/reject', requireRole('checker', 'purchase', 'operations', 'accounts', 'admin'), async (req, res) => {
+router.post('/expenses/:id/reject', requireRole('checker', 'purchase', 'operations', 'accounts', 'account_checker', 'admin'), async (req, res) => {
   const e = await db.prepare('SELECT * FROM expenses WHERE id=?').get(req.params.id);
   if (!e) return res.status(404).json({ error: 'Not found' });
   if (!inScope(req.user, e.project_id)) return res.status(403).json({ error: 'Project not in your access' });
@@ -543,7 +546,7 @@ router.post('/expenses/:id/reject', requireRole('checker', 'purchase', 'operatio
   res.json({ ok: true });
 });
 
-router.post('/expenses/:id/query', requireRole('checker', 'purchase', 'operations', 'accounts', 'admin'), async (req, res) => {
+router.post('/expenses/:id/query', requireRole('checker', 'purchase', 'operations', 'accounts', 'account_checker', 'admin'), async (req, res) => {
   const e = await db.prepare('SELECT * FROM expenses WHERE id=?').get(req.params.id);
   if (!e) return res.status(404).json({ error: 'Not found' });
   if (!inScope(req.user, e.project_id)) return res.status(403).json({ error: 'Project not in your access' });
@@ -640,6 +643,7 @@ router.post('/queries/:id/attach', upload.array('files', 12), async (req, res) =
 
 // ================================================================ FUNDS & BALANCE
 router.get('/funds', async (req, res) => {
+  if (req.user.role === 'account_checker') return res.status(403).json({ error: 'Not permitted' });
   const m = await nameMaps();
   const s = scopeOf(req.user);
   const role = req.user.role;
@@ -965,7 +969,7 @@ router.post('/masters/:type/:id/rename', requireRole('admin'), async (req, res) 
 });
 
 // ================================================================ REPORTS (CSV)
-router.get('/reports/expenses.csv', async (req, res) => {
+router.get('/reports/expenses.csv', requireRole('accounts', 'admin'), async (req, res) => {
   const m = await nameMaps();
   const sc = scopeClause(req.user, 'e');
   const params = [...sc.params];
