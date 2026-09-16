@@ -147,7 +147,7 @@ async function boot() {
   $("#login").classList.add("hide");
   $("#app").classList.remove("hide");
   $("#who").innerHTML =
-    `<div class="nm">${esc(S.user.name)}</div><div class="rl">${ROLES[S.user.role]}</div><div class="logout" onclick="logout()">⎋ Sign out</div>`;
+    `<div class="nm">${esc(S.user.name)}</div><div class="rl">${ROLES[S.user.role]}</div><div class="logout" onclick="UsersAdmin.changePassword()">Change Password</div><div class="logout" onclick="logout()">⎋ Sign out</div>`;
   await buildNav();
   go(S.page);
 }
@@ -160,6 +160,7 @@ const can = {
       S.user.role,
     ),
   admin: () => S.user.role === "admin",
+  accountCheckers: () => ["accounts", "admin"].includes(S.user.role),
   audit: () => S.user.role === "admin",
   addFunds: () => ["admin", "accounts"].includes(S.user.role),
   payments: () => ["accounts", "admin"].includes(S.user.role),
@@ -262,8 +263,10 @@ async function buildNav() {
     });
   if (can.analytics())
     items.push({ id: "analytics", ic: "📊", label: "Analytics" });
-  if (can.admin() || can.audit()) {
+  if (can.admin() || can.audit() || S.user.role === "accounts") {
     items.push({ grp: "Administration" });
+    if (S.user.role === "accounts")
+      items.push({ id: "accountCheckers", ic: "◎", label: "Account Checkers" });
     if (can.admin())
       items.push({ id: "users", ic: "◎", label: "Users & Access" });
     if (can.admin()) items.push({ id: "masters", ic: "⚙", label: "Masters" });
@@ -333,6 +336,7 @@ const TITLES = {
     "Complete history of fund requests",
   ],
   users: ["Users & Access", "Accounts, roles & project access"],
+  accountCheckers: ["Account Checkers", "Manage Account Checker access"],
   masters: ["Masters", "Categories, projects & locations"],
   audit: ["Audit Trail", "Complete activity log"],
   payments: ["Approved Payments", "Select approved vouchers to pay"],
@@ -3381,6 +3385,13 @@ Views.users = async function () {
     <div class="table-wrap"><table><thead><tr><th>Name</th><th>Username</th><th>Profile</th><th>Project Access</th><th>Status</th><th></th></tr></thead><tbody>${users.map((u) => `<tr><td><b>${esc(u.name)}</b></td><td class="mono">${esc(u.username)}</td><td><span class="tag">${ROLES[u.role]}</span></td><td>${u.all_projects ? '<span class="tag" style="background:var(--accent-soft);color:var(--accent-d)">All</span>' : u.project_ids.length ? u.project_ids.map((id) => `<span class="tag">${esc((S.allProjects.find((p) => p.id === id) || {}).code || "?")}</span>`).join(" ") : '<span class="tag">none</span>'}</td><td>${u.active ? '<span class="pill p-app">Active</span>' : '<span class="pill p-rej">Disabled</span>'}</td><td style="text-align:right"><button class="btn btn-ghost btn-sm" onclick="UsersAdmin.edit('${u.id}')">Edit</button>${u.id !== S.user.id ? `<button class="btn btn-ghost btn-sm" onclick="UsersAdmin.toggle('${u.id}')">${u.active ? "Disable" : "Enable"}</button>` : '<span class="tag">you</span>'}</td></tr>`).join("")}</tbody></table></div></div>`;
 };
 
+Views.accountCheckers = async function () {
+  const users = await api("GET", "/account-checkers");
+  Views._accountCheckers = users;
+  const rows = users.map((u) => `<tr><td><b>${esc(u.name)}</b></td><td class="mono">${esc(u.username)}</td><td>${u.all_projects ? '<span class="tag">All</span>' : u.project_ids.length ? u.project_ids.map((id) => `<span class="tag">${esc((S.allProjects.find((p) => p.id === id) || {}).code || "?")}</span>`).join(" ") : '<span class="tag">none</span>'}</td><td>${u.active ? '<span class="pill p-app">Active</span>' : '<span class="pill p-rej">Disabled</span>'}</td><td style="text-align:right"><button class="btn btn-ghost btn-sm" onclick="AccountCheckerAdmin.edit('${u.id}')">Edit</button><button class="btn btn-ghost btn-sm" onclick="AccountCheckerAdmin.toggle('${u.id}')">${u.active ? "Disable" : "Enable"}</button></td></tr>`).join("");
+  $("#content").innerHTML = `<div class="card"><div class="card-pad" style="display:flex;align-items:center;border-bottom:1px solid var(--line)"><div><h3>Account Checkers</h3><div class="csub" style="margin:0">${users.length} users</div></div><button class="btn btn-primary btn-sm" style="margin-left:auto" onclick="AccountCheckerAdmin.edit()">+ Create Account Checker</button></div><div class="table-wrap"><table><thead><tr><th>Name</th><th>Username</th><th>Project Access</th><th>Status</th><th></th></tr></thead><tbody>${rows || '<tr><td colspan="5"><div class="empty">No Account Checkers yet.</div></td></tr>'}</tbody></table></div></div>`;
+};
+
 Views.masters = async function () {
   return Views._master("categories");
 };
@@ -4215,7 +4226,45 @@ const BudgetsAdmin = {
     }
   },
 };
+const AccountCheckerAdmin = {
+  edit(id) {
+    const u = id ? (Views._accountCheckers || []).find((x) => x.id === id) : null;
+    const chips = S.allProjects.filter((p) => p.active).map((p) => `<span class="chip ${u && !u.all_projects && u.project_ids.includes(p.id) ? "on" : ""}" data-pid="${p.id}" onclick="this.classList.toggle('on')">${esc(p.code)} · ${esc(p.name)}</span>`).join("");
+    const allOn = u ? u.all_projects : false;
+    Modal.open(`<div class="modal-head"><h3>${u ? "Edit Account Checker" : "Create Account Checker"}</h3><button class="x" onclick="Modal.close()">×</button></div><div class="modal-body"><div class="frow"><div class="field"><label>Full name *</label><input id="ac-name" value="${esc(u ? u.name : "")}"></div><div class="field"><label>Username *</label><input id="ac-user" value="${esc(u ? u.username : "")}"></div></div><div class="frow"><div class="field"><label>Profile / Role</label><input value="Account Checker" disabled></div><div class="field"><label>${u ? "Reset password" : "Password *"}</label><input id="ac-pass" type="password" placeholder="${u ? "leave blank to keep" : "set a password"}"></div></div><div class="field full"><label>Project access</label><label style="display:flex;gap:8px;align-items:center;text-transform:none;letter-spacing:0;color:var(--ink);margin:4px 0 8px"><input type="checkbox" id="ac-all" ${allOn ? "checked" : ""} onchange="$('#ac-chips').style.opacity=this.checked?.4:1;$('#ac-chips').style.pointerEvents=this.checked?'none':'auto'"> All projects (head office)</label><div class="chips" id="ac-chips" style="${allOn ? "opacity:.4;pointer-events:none" : ""}">${chips}</div></div></div><div class="modal-foot"><button class="btn btn-ghost" onclick="Modal.close()">Cancel</button><button class="btn btn-primary" onclick="AccountCheckerAdmin.save(${u ? `'${u.id}'` : "null"})">Save</button></div>`);
+  },
+  async save(id) {
+    const password = $("#ac-pass").value;
+    const allProjects = $("#ac-all").checked;
+    const body = { name: $("#ac-name").value.trim(), username: $("#ac-user").value.trim(), allProjects, projectIds: allProjects ? [] : $$("#ac-chips .chip.on").map((c) => c.dataset.pid) };
+    if (password) body.password = password;
+    if (!body.name || !body.username || (!id && !password)) {
+      toast(id ? "Name and username required" : "Name, username and password required", "err");
+      return;
+    }
+    try {
+      await api(id ? "PATCH" : "POST", id ? `/account-checkers/${id}` : "/account-checkers", body);
+      Modal.close();
+      toast("Saved", "ok");
+      go("accountCheckers");
+    } catch (e) { toast(e.message, "err"); }
+  },
+  async toggle(id) {
+    try { await api("POST", `/account-checkers/${id}/toggle`); go("accountCheckers"); }
+    catch (e) { toast(e.message, "err"); }
+  },
+};
+
 const UsersAdmin = {
+  changePassword() {
+    Modal.open(`<div class="modal-head"><h3>Change Password</h3><button class="x" onclick="Modal.close()">×</button></div><div class="modal-body"><div class="field"><label>New password *</label><input id="self-pass" type="password" autocomplete="new-password"></div></div><div class="modal-foot"><button class="btn btn-ghost" onclick="Modal.close()">Cancel</button><button class="btn btn-primary" onclick="UsersAdmin.savePassword()">Change Password</button></div>`);
+  },
+  async savePassword() {
+    const password = $("#self-pass").value;
+    if (!password) { toast("Password is required", "err"); return; }
+    try { await api("POST", "/me/password", { password }); Modal.close(); toast("Password changed", "ok"); }
+    catch (e) { toast(e.message, "err"); }
+  },
   edit(id) {
     const u = id ? (Views._users || []).find((x) => x.id === id) : null;
     const chips = S.allProjects

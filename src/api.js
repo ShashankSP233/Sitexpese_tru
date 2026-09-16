@@ -919,6 +919,76 @@ router.post('/users/:id/toggle', requireRole('admin'), async (req, res) => {
   res.json({ ok: true });
 });
 
+// ================================================================ ACCOUNT CHECKERS (accounts manager)
+function requireAccountCheckerTarget(req, res, next) {
+  if (req.user.role !== 'accounts') return res.status(403).json({ error: 'Not permitted' });
+  return next();
+}
+
+router.get('/account-checkers', requireAccountCheckerTarget, async (req, res) => {
+  const users = await db.prepare(
+    "SELECT id,username,name,role,all_projects,active,created_at FROM users WHERE role='account_checker' ORDER BY name"
+  ).all();
+  for (const u of users) {
+    u.all_projects = !!u.all_projects;
+    u.active = !!u.active;
+    u.project_ids = (await db.prepare('SELECT project_id FROM user_projects WHERE user_id=?').all(u.id)).map(r => r.project_id);
+  }
+  res.json(users);
+});
+
+router.post('/account-checkers', requireAccountCheckerTarget, async (req, res) => {
+  const { username, name, password, allProjects, projectIds } = req.body;
+  if (!username || !name || !password) return res.status(400).json({ error: 'Missing fields' });
+  if (await db.prepare('SELECT 1 FROM users WHERE username=?').get(username)) return res.status(409).json({ error: 'Username exists' });
+  const id = uid();
+  await db.prepare('INSERT INTO users (id,username,name,password_hash,role,all_projects,active,created_at) VALUES (?,?,?,?,?,?,1,?)')
+    .run(id, username, name, bcrypt.hashSync(password, 10), 'account_checker', allProjects ? 1 : 0, now());
+  if (!allProjects) {
+    for (const pid of (projectIds || [])) {
+      await db.prepare('INSERT INTO user_projects (user_id,project_id) VALUES (?,?) ON CONFLICT (user_id,project_id) DO NOTHING').run(id, pid);
+    }
+  }
+  await logAudit(req.user, 'Created account checker', 'user', username, 'account_checker');
+  res.json({ id });
+});
+
+router.patch('/account-checkers/:id', requireAccountCheckerTarget, async (req, res) => {
+  const u = await db.prepare('SELECT * FROM users WHERE id=?').get(req.params.id);
+  if (!u || u.role !== 'account_checker') return res.status(404).json({ error: 'Account Checker not found' });
+  const { username, name, password, allProjects, projectIds } = req.body;
+  const newUsername = (username || '').trim();
+  if (newUsername && newUsername !== u.username) {
+    const clash = await db.prepare('SELECT 1 FROM users WHERE username=? AND id!=?').get(newUsername, u.id);
+    if (clash) return res.status(409).json({ error: 'Username already exists' });
+  }
+  await db.prepare('UPDATE users SET username=?,name=?,all_projects=?,role=? WHERE id=?')
+    .run(newUsername || u.username, name ?? u.name, allProjects ? 1 : 0, 'account_checker', u.id);
+  if (password) await db.prepare('UPDATE users SET password_hash=? WHERE id=?').run(bcrypt.hashSync(password, 10), u.id);
+  await db.prepare('DELETE FROM user_projects WHERE user_id=?').run(u.id);
+  if (!allProjects) {
+    for (const pid of (projectIds || [])) {
+      await db.prepare('INSERT INTO user_projects (user_id,project_id) VALUES (?,?) ON CONFLICT (user_id,project_id) DO NOTHING').run(u.id, pid);
+    }
+  }
+  await logAudit(req.user, 'Edited account checker', 'user', newUsername || u.username, 'account_checker');
+  res.json({ ok: true });
+});
+
+router.post('/account-checkers/:id/toggle', requireAccountCheckerTarget, async (req, res) => {
+  const u = await db.prepare('SELECT * FROM users WHERE id=?').get(req.params.id);
+  if (!u || u.role !== 'account_checker') return res.status(404).json({ error: 'Account Checker not found' });
+  await db.prepare('UPDATE users SET active=? WHERE id=?').run(u.active ? 0 : 1, u.id);
+  res.json({ ok: true });
+});
+
+router.post('/me/password', requireRole('admin', 'accounts', 'account_checker'), async (req, res) => {
+  const password = String(req.body.password || '');
+  if (!password) return res.status(400).json({ error: 'Password is required' });
+  await db.prepare('UPDATE users SET password_hash=? WHERE id=?').run(bcrypt.hashSync(password, 10), req.user.id);
+  res.json({ ok: true });
+});
+
 // ================================================================ MASTERS (admin)
 const MASTER_TABLES = { categories: 1, projects: 1, locations: 1 };
 router.get('/masters', requireRole('admin'), async (req, res) => {
