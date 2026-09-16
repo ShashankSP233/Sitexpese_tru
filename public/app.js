@@ -2164,6 +2164,22 @@ Views._printFundRequest = async function (id) {
           ================================================= */
 
           .to-block {
+            border: 1px solid #999;
+
+            padding: 8px 10px;
+
+            margin-top: 10px;
+
+            margin-bottom: 9px;
+
+            font-size: 12px;
+          }
+
+          .from-block {
+            border: 1px solid #999;
+
+            padding: 8px 10px;
+
             margin-top: 10px;
 
             margin-bottom: 9px;
@@ -2299,7 +2315,7 @@ Views._printFundRequest = async function (id) {
 
           .signature-area {
             position: static;
-            margin-top: 14px;
+            margin-top: 34px;
             margin-bottom: 58px;
           }
 
@@ -2374,7 +2390,7 @@ Views._printFundRequest = async function (id) {
           .signature-line {
             border-top: 1px solid #111;
 
-            margin-top: 20px;
+            margin-top: 40px;
 
             margin-bottom: 7px;
           }
@@ -2702,7 +2718,8 @@ Views._printFundRequest = async function (id) {
               <strong>To:</strong>
                 Hon. Chairman Sir, Managing Director Sir
             </div>
-
+          </div>
+          <div class="from-block">
             <div>
               <strong>From:</strong>
               Purchase Dept.
