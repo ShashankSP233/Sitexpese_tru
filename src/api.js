@@ -1464,9 +1464,19 @@ router.get(
     );
 
     res.json({
-      ...request,
-      total: toRupees(request.total_amount),
-      items: itemsWithHistory.map(e => ({
+    ...request,
+    total: toRupees(request.total_amount),
+
+    items: itemsWithHistory.map(e => {
+      let approvals = {};
+
+      try {
+        approvals = JSON.parse(e.approvals || '{}');
+      } catch (_) {
+        approvals = {};
+      }
+
+      return {
         ...e,
 
         amount: toRupees(e.requested_amount),
@@ -1485,10 +1495,27 @@ router.get(
 
         createdByName:
           m.usr[e.created_by] || '',
-      }))
-    });
-  }
-);
+
+        approvalNames: {
+          accounts:
+            approvals.accounts?.by
+              ? m.usr[approvals.accounts.by] || ''
+              : '',
+
+          purchase:
+            approvals.purchase?.by
+              ? m.usr[approvals.purchase.by] || ''
+              : '',
+
+          operations:
+            approvals.operations?.by
+              ? m.usr[approvals.operations.by] || ''
+              : '',
+        },
+      };
+    })
+  });
+});
 
 router.post(
   '/fund-requests/:id/print',

@@ -1627,6 +1627,7 @@ Views._printFundRequest = async function (id) {
       "GET",
       `/fund-requests/${encodeURIComponent(id)}`,
     );
+
     const requestNo = r.request_no || "—";
     const createdBy = r.created_by_name || "—";
     const items = r.items || [];
@@ -1635,6 +1636,45 @@ Views._printFundRequest = async function (id) {
       toast("Fund request contains no vouchers", "err");
       return;
     }
+
+    /* =========================================================
+       REVIEWER NAMES
+    ========================================================= */
+
+    const accountsReviewers = new Set();
+    const purchaseReviewers = new Set();
+    const operationsReviewers = new Set();
+
+    items.forEach((e) => {
+      const names = e.approvalNames || {};
+
+      if (names.accounts) {
+        accountsReviewers.add(names.accounts);
+      }
+
+      if (names.purchase) {
+        purchaseReviewers.add(names.purchase);
+      }
+
+      if (names.operations) {
+        operationsReviewers.add(names.operations);
+      }
+    });
+
+    const accountsReviewerName =
+      Array.from(accountsReviewers).join(", ") || "—";
+
+    const purchaseReviewerName =
+      Array.from(purchaseReviewers).join(", ") || "—";
+
+    const operationsReviewerName =
+      Array.from(operationsReviewers).join(", ") || "—";
+
+    /*
+     * The Admin is the person who created the fund request.
+     */
+    const adminName = createdBy || "—";
+
 
     /* =========================================================
        GROUP VOUCHERS BY PROJECT
@@ -1669,6 +1709,7 @@ Views._printFundRequest = async function (id) {
       0,
     );
 
+
     /* =========================================================
        PAGE 1 — PROJECT SUMMARY
     ========================================================= */
@@ -1698,188 +1739,125 @@ Views._printFundRequest = async function (id) {
       )
       .join("");
 
+
     /* =========================================================
        WORKFLOW HISTORY
     ========================================================= */
 
-  
+    /*
+     * Reviewer names are taken from each voucher's approvalNames.
+     * The detailed voucher history remains available in the API
+     * response but is not printed separately here.
+     */
+
 
     /* =========================================================
        ANNEXURES — ONE SECTION PER PROJECT
     ========================================================= */
 
     const annexures = projects
-      .map(
-        (p) => {
+      .map((p) => {
+        const voucherRows = p.items
+          .map(
+            (e, index) => `
+              <tr>
+                <td class="num">${index + 1}</td>
 
-          const voucherBlocks = p.items
-            .map(
-              (e, index) => {
+                <td class="mono">
+                  ${esc(e.voucher_no || "—")}
+                </td>
 
+                <td>
+                  ${fmtDate(e.date)}
+                </td>
 
-                return `
-                  <div class="voucher-block">
+                <td>
+                  ${esc(e.createdByName || "—")}
+                </td>
 
-                    <!-- VOUCHER HEADER -->
+                <td>
+                  ${esc(e.locationName || "—")}
+                </td>
 
-                    <div class="voucher-heading">
+                <td>
+                  ${esc(e.categoryName || "—")}
+                </td>
 
-                      <div>
-                        <strong>
-                          Voucher ${index + 1}
-                        </strong>
+                <td>
+                  ${esc(e.details || "—")}
+                </td>
 
-                        <span class="voucher-no">
-                          ${esc(e.voucher_no || "")}
-                        </span>
-                      </div>
+                <td class="num">
+                  <strong>${money(e.amount)}</strong>
+                </td>
+              </tr>
+            `,
+          )
+          .join("");
 
-                      <div class="voucher-amount">
-                        ${money(e.amount)}
-                      </div>
+        return `
+          <section class="annexure">
 
+            <div class="annexure-heading">
+
+              <div class="annexure-title">
+                ANNEXURE
+              </div>
+
+              <div class="annexure-project">
+                PROJECT: ${esc(p.code)}
+              </div>
+
+              ${
+                p.name
+                  ? `
+                    <div class="annexure-project-name">
+                      ${esc(p.name)}
                     </div>
+                  `
+                  : ""
+              }
 
+            </div>
 
-                    <!-- VOUCHER DETAILS -->
+            <table class="annexure-table">
 
-                    <table class="voucher-details">
+              <thead>
+                <tr>
+                  <th>Sr.</th>
+                  <th>Voucher No.</th>
+                  <th>Date</th>
+                  <th>Created By</th>
+                  <th>Site / Location</th>
+                  <th>Category</th>
+                  <th>Details</th>
+                  <th class="num">Amount</th>
+                </tr>
+              </thead>
 
-                      <tbody>
+              <tbody>
+                ${voucherRows}
+              </tbody>
 
-                        <tr>
+              <tfoot>
+                <tr>
+                  <td colspan="7" class="num">
+                    <strong>Project Total</strong>
+                  </td>
 
-                          <td class="label">
-                            Voucher No.
-                          </td>
+                  <td class="num">
+                    <strong>${money(p.amount)}</strong>
+                  </td>
+                </tr>
+              </tfoot>
 
-                          <td>
-                            ${esc(e.voucher_no || "")}
-                          </td>
+            </table>
 
-                          <td class="label">
-                            Voucher Date
-                          </td>
-
-                          <td>
-                            ${fmtDate(e.date)}
-                          </td>
-
-                        </tr>
-
-                        <tr>
-
-                          <td class="label">
-                            Created By
-                          </td>
-
-                          <td>
-                            ${esc(e.createdByName || "—")}
-                          </td>
-
-                          <td class="label">
-                            Site / Location
-                          </td>
-
-                          <td>
-                            ${esc(e.locationName || "—")}
-                          </td>
-
-                        </tr>
-
-                        <tr>
-
-                          <td class="label">
-                            Category
-                          </td>
-
-                          <td>
-                            ${esc(e.categoryName || "—")}
-                          </td>
-
-                          <td class="label">
-                            Amount
-                          </td>
-
-                          <td>
-                            <strong>
-                              ${money(e.amount)}
-                            </strong>
-                          </td>
-
-                        </tr>
-
-                        <tr>
-
-                          <td class="label">
-                            Details
-                          </td>
-
-                          <td colspan="3">
-                            ${esc(e.details || "—")}
-                          </td>
-
-                        </tr>
-
-                      </tbody>
-
-                    </table>
-
-
-                    
-
-                  </div>
-                `;
-              },
-            )
-            .join("");
-
-          return `
-            <section class="annexure">
-
-              <div class="annexure-heading">
-
-                <div class="annexure-title">
-                  ANNEXURE
-                </div>
-
-                <div class="annexure-project">
-                  PROJECT: ${esc(p.code)}
-                </div>
-
-                ${
-                  p.name
-                    ? `
-                      <div class="annexure-project-name">
-                        ${esc(p.name)}
-                      </div>
-                    `
-                    : ""
-                }
-
-              </div>
-
-
-              ${voucherBlocks}
-
-
-              <div class="project-total">
-
-                <span>
-                  Project Total
-                </span>
-
-                <strong>
-                  ${money(p.amount)}
-                </strong>
-
-              </div>
-
-            </section>
-          `;
-        },
-      )
+          </section>
+        `;
+      })
       .join("");
+
 
     /* =========================================================
        PRINT WINDOW
@@ -2138,8 +2116,64 @@ Views._printFundRequest = async function (id) {
 
             right: 0;
 
-            bottom: 18mm;
+            bottom: 10mm;
+          }
 
+          .digital-verification-title {
+            text-align: left;
+
+            font-size: 11px;
+
+            font-weight: bold;
+
+            margin-bottom: 7px;
+          }
+
+          .digital-signatures {
+            display: grid;
+
+            grid-template-columns: 1fr 1fr;
+
+            gap: 7px 12px;
+
+            margin-bottom: 14px;
+          }
+
+          .digital-signature-box {
+            border: 1px solid #555;
+
+            min-height: 48px;
+
+            padding: 6px 8px;
+
+            text-align: center;
+
+            page-break-inside: avoid;
+          }
+
+          .digital-signature-status {
+            font-size: 8px;
+
+            font-weight: bold;
+
+            letter-spacing: 0.5px;
+
+            margin-bottom: 5px;
+          }
+
+          .digital-signature-name {
+            font-weight: bold;
+
+            font-size: 10px;
+          }
+
+          .digital-signature-role {
+            font-size: 8px;
+
+            margin-top: 2px;
+          }
+
+          .physical-signatures {
             display: grid;
 
             grid-template-columns: 1fr 1fr;
@@ -2150,7 +2184,7 @@ Views._printFundRequest = async function (id) {
           .signature-box {
             text-align: center;
 
-            padding-top: 50px;
+            padding-top: 45px;
           }
 
           .signature-line {
@@ -2169,6 +2203,65 @@ Views._printFundRequest = async function (id) {
           /* =================================================
              ANNEXURE
           ================================================= */
+
+          .annexure-table {
+            width: 100%;
+
+            border-collapse: collapse;
+
+            font-size: 9px;
+          }
+
+          .annexure-table th,
+          .annexure-table td {
+            border: 1px solid #333;
+
+            padding: 4px 5px;
+
+            vertical-align: top;
+          }
+
+          .annexure-table th {
+            text-align: center;
+
+            font-weight: 700;
+          }
+
+          .annexure-table .num {
+            text-align: right;
+
+            white-space: nowrap;
+          }
+
+          .annexure-table thead {
+            display: table-header-group;
+          }
+
+          .annexure-table tfoot {
+            display: table-row-group;
+          }
+
+          .annexure-table tr {
+            page-break-inside: avoid;
+          }
+
+          .annexure {
+            page-break-before: always;
+          }
+
+          .annexure-title {
+            font-weight: 700;
+          }
+
+          .annexure-project {
+            font-weight: 700;
+
+            margin-top: 3px;
+          }
+
+          .annexure-project-name {
+            margin-bottom: 8px;
+          }
 
           .annexure {
             page-break-before: always;
@@ -2261,6 +2354,7 @@ Views._printFundRequest = async function (id) {
 
             background: #fafafa;
           }
+
 
           /* =================================================
              PROJECT TOTAL
@@ -2432,30 +2526,120 @@ Views._printFundRequest = async function (id) {
           </div>
 
 
+          <!-- =================================================
+               DIGITAL VERIFICATION
+          ================================================= -->
+
           <div class="signature-area">
 
+            <div class="digital-verification-title">
+              DIGITAL VERIFICATION
+            </div>
 
-            <div class="signature-box">
+            <div class="digital-signatures">
 
-              <div class="signature-line"></div>
+              <!-- ACCOUNTS -->
+              <div class="digital-signature-box">
 
-              <div class="signature-name">
-                Managing Director Sir
+                <div class="digital-signature-status">
+                  DIGITALLY VERIFIED
+                </div>
+
+                <div class="digital-signature-name">
+                  ${esc(accountsReviewerName || "—")}
+                </div>
+
+                <div class="digital-signature-role">
+                  Accounts Reviewer
+                </div>
+
+              </div>
+
+
+              <!-- PURCHASE -->
+              <div class="digital-signature-box">
+
+                <div class="digital-signature-status">
+                  DIGITALLY VERIFIED
+                </div>
+
+                <div class="digital-signature-name">
+                  ${esc(purchaseReviewerName || "—")}
+                </div>
+
+                <div class="digital-signature-role">
+                  Purchase Reviewer
+                </div>
+
+              </div>
+
+
+              <!-- OPERATIONS -->
+              <div class="digital-signature-box">
+
+                <div class="digital-signature-status">
+                  DIGITALLY VERIFIED
+                </div>
+
+                <div class="digital-signature-name">
+                  ${esc(operationsReviewerName || "—")}
+                </div>
+
+                <div class="digital-signature-role">
+                  Operations Reviewer
+                </div>
+
+              </div>
+
+
+              <!-- ADMIN -->
+              <div class="digital-signature-box">
+
+                <div class="digital-signature-status">
+                  DIGITALLY VERIFIED
+                </div>
+
+                <div class="digital-signature-name">
+                  ${esc(adminName || "—")}
+                </div>
+
+                <div class="digital-signature-role">
+                  Admin
+                </div>
+
               </div>
 
             </div>
 
 
-            <div class="signature-box">
+            <!-- =================================================
+                 PHYSICAL SIGNATURES
+            ================================================= -->
 
-              <div class="signature-line"></div>
+            <div class="physical-signatures">
 
-              <div class="signature-name">
-                Chairman Sir
+              <div class="signature-box">
+
+                <div class="signature-line"></div>
+
+                <div class="signature-name">
+                  Managing Director Sir
+                </div>
+
+              </div>
+
+
+              <div class="signature-box">
+
+                <div class="signature-line"></div>
+
+                <div class="signature-name">
+                  Hon. Chairman Sir
+                </div>
+
               </div>
 
             </div>
-
 
           </div>
 
@@ -2493,6 +2677,8 @@ Views._printFundRequest = async function (id) {
     toast(e.message, "err");
   }
 };
+
+
 Views._markFundRequestPrinted = async function (id) {
   try {
     if (
