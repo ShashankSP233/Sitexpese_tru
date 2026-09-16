@@ -12,6 +12,87 @@ const esc = (s) =>
   );
 const money = (n) =>
   "₹" + (Number(n) || 0).toLocaleString("en-IN", { maximumFractionDigits: 2 });
+
+function amountInWordsIndian(amount) {
+  const n = Math.round(Number(amount) || 0);
+
+  if (n === 0) return "Zero Rupees Only";
+
+  const ones = [
+    "",
+    "One",
+    "Two",
+    "Three",
+    "Four",
+    "Five",
+    "Six",
+    "Seven",
+    "Eight",
+    "Nine",
+    "Ten",
+    "Eleven",
+    "Twelve",
+    "Thirteen",
+    "Fourteen",
+    "Fifteen",
+    "Sixteen",
+    "Seventeen",
+    "Eighteen",
+    "Nineteen",
+  ];
+
+  const tens = [
+    "",
+    "",
+    "Twenty",
+    "Thirty",
+    "Forty",
+    "Fifty",
+    "Sixty",
+    "Seventy",
+    "Eighty",
+    "Ninety",
+  ];
+
+  function under100(n) {
+    if (n < 20) return ones[n];
+    return tens[Math.floor(n / 10)] + (n % 10 ? " " + ones[n % 10] : "");
+  }
+
+  function under1000(n) {
+    if (n < 100) return under100(n);
+
+    return (
+      ones[Math.floor(n / 100)] +
+      " Hundred" +
+      (n % 100 ? " " + under100(n % 100) : "")
+    );
+  }
+
+  function indian(n) {
+    const parts = [];
+
+    const crore = Math.floor(n / 10000000);
+    n %= 10000000;
+
+    const lakh = Math.floor(n / 100000);
+    n %= 100000;
+
+    const thousand = Math.floor(n / 1000);
+    n %= 1000;
+
+    if (crore) parts.push(under100(crore) + " Crore");
+    if (lakh) parts.push(under100(lakh) + " Lakh");
+    if (thousand) parts.push(under100(thousand) + " Thousand");
+    if (n) parts.push(under1000(n));
+
+    return parts.join(" ");
+  }
+
+  return indian(n) + " Rupees Only";
+}
+
+
 const fmtDate = (d) =>
   d
     ? new Date(d).toLocaleDateString("en-GB", {
@@ -1639,6 +1720,16 @@ Views._printFundRequest = async function (id) {
     const createdBy = r.created_by_name || "—";
     const items = r.items || [];
 
+    const requestDate = new Date(r.created_at);
+    const documentSerial =
+      `YG/DhartiSiteExp/` +
+      `${requestDate.toLocaleDateString("en-GB", {
+        month: "short",
+        year: "2-digit",
+      })}/` +
+      `${requestNo}`;
+    
+
     if (!items.length) {
       toast("Fund request contains no vouchers", "err");
       return;
@@ -1717,6 +1808,23 @@ Views._printFundRequest = async function (id) {
     );
 
 
+    const projectNames = projects
+      .map((p) => p.name)
+      .filter(Boolean)
+      .join(", ");
+
+    const voucherDates = items
+      .map((e) => e.date)
+      .filter(Boolean)
+      .sort();
+
+    const oldestVoucherDate = voucherDates[0];
+    const newestVoucherDate = voucherDates[voucherDates.length - 1];
+
+    const subjectText =
+      `Petty Cash Expenses for ${projectNames || "Site Expenses"} ` +
+      `from ${fmtDate(oldestVoucherDate)} - ${fmtDate(newestVoucherDate)}`;
+
     /* =========================================================
        PAGE 1 — PROJECT SUMMARY
     ========================================================= */
@@ -1730,12 +1838,13 @@ Views._printFundRequest = async function (id) {
             </td>
 
             <td>
-              <strong>${esc(p.code)}</strong>
-              ${
-                p.name
-                  ? `<div class="muted">${esc(p.name)}</div>`
-                  : ""
-              }
+              <strong class="project-name-large">
+                ${esc(p.name || "—")}
+              </strong>
+
+              <div class="project-code-small">
+                ${esc(p.code || "—")}
+              </div>
             </td>
 
             <td class="amount">
@@ -1804,6 +1913,21 @@ Views._printFundRequest = async function (id) {
 
         return `
           <section class="annexure">
+            <div class="annexure-document-header">
+
+            <div class="annexure-logo">
+                <img src="/logo.png" alt="Dharti">
+              </div>
+
+              <div class="annexure-document-title">
+                APPROVAL NOTE
+                <div>SiteXpense</div>
+              </div>
+
+              <div class="annexure-document-serial">
+                Sr. No.: ${esc(documentSerial)}
+              </div>
+            </div>
 
             <div class="annexure-heading">
 
@@ -1812,18 +1936,12 @@ Views._printFundRequest = async function (id) {
               </div>
 
               <div class="annexure-project">
-                PROJECT: ${esc(p.code)}
+                PROJECT: ${esc(p.name || "—")}
               </div>
 
-              ${
-                p.name
-                  ? `
-                    <div class="annexure-project-name">
-                      ${esc(p.name)}
-                    </div>
-                  `
-                  : ""
-              }
+              <div class="annexure-project-name">
+                Code: ${esc(p.code || "—")}
+              </div>
 
             </div>
 
@@ -1887,12 +2005,6 @@ Views._printFundRequest = async function (id) {
       <html>
 
       <head>
-
-        <title>
-          ${esc(requestNo || "Fund Request")}
-        </title>
-
-
         <style>
 
           @page {
@@ -1918,7 +2030,63 @@ Views._printFundRequest = async function (id) {
 
             line-height: 1.35;
           }
+          /* =================================================
+             HEADER
+          ================================================= */
 
+          .document-header {
+            position: relative;
+            min-height: 82px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            margin-bottom: 12px;
+          }
+
+          .document-header-logo {
+            position: absolute;
+            left: 50%;
+            top: 0;
+            transform: translateX(-50%);
+            width: 90px;
+            height: 55px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+          }
+
+          .document-header-logo img {
+            max-width: 85px;
+            max-height: 55px;
+            object-fit: contain;
+          }
+
+          .document-header-title {
+            position: relative;
+            width: 100%;
+            text-align: center;
+            padding-top: 52px;
+          }
+
+          .document-header-serial {
+            position: absolute;
+            left: 0;
+            top: 10px;
+            width: 100%;
+            text-align: left;
+          }
+
+          .serial-label {
+            font-size: 9px;
+            font-weight: bold;
+            text-transform: uppercase;
+          }
+
+          .serial-value {
+            font-size: 10px;
+            font-weight: bold;
+            margin-top: 2px;
+          }
 
           /* =================================================
              PAGE
@@ -1928,7 +2096,18 @@ Views._printFundRequest = async function (id) {
             min-height: 270mm;
             position: relative;
           }
+          .project-name-large {
+            display: block;
+            font-size: 12px;
+            font-weight: 700;
+          }
 
+          .project-code-small {
+            display: block;
+            margin-top: 2px;
+            font-size: 9px;
+            color: #555;
+          }
 
           /* =================================================
              PAGE 1 HEADER
@@ -2104,6 +2283,8 @@ Views._printFundRequest = async function (id) {
           .request-note {
             margin-top: 22px;
 
+            margin-bottom: 10px;
+
             border: 1px solid #999;
 
             padding: 10px 12px;
@@ -2117,13 +2298,9 @@ Views._printFundRequest = async function (id) {
           ================================================= */
 
           .signature-area {
-            position: absolute;
-
-            left: 0;
-
-            right: 0;
-
-            bottom: 10mm;
+            position: static;
+            margin-top: 14px;
+            margin-bottom: 58px;
           }
 
           .digital-verification-title {
@@ -2197,6 +2374,8 @@ Views._printFundRequest = async function (id) {
           .signature-line {
             border-top: 1px solid #111;
 
+            margin-top: 20px;
+
             margin-bottom: 7px;
           }
 
@@ -2205,7 +2384,21 @@ Views._printFundRequest = async function (id) {
 
             font-size: 11px;
           }
+            
+          .approval-header {
+            position: relative;
+            width: 100%;
+          }
 
+          .sr-number {
+              position: absolute;
+              right: 0;
+              top: 50%;
+              transform: translateY(-50%);
+              font-size: 9px;
+              font-weight: bold;
+              white-space: nowrap;
+          }
 
           /* =================================================
              ANNEXURE
@@ -2278,6 +2471,48 @@ Views._printFundRequest = async function (id) {
             text-align: center;
 
             margin-bottom: 18px;
+          }
+          .annexure-document-header {
+            position: relative;
+            min-height: 62px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            margin-bottom: 10px;
+            border-bottom: 1px solid #aaa;
+            padding-bottom: 7px;
+          }
+
+          .annexure-logo {
+            position: absolute;
+            left: 0;
+            top: 0;
+          }
+
+          .annexure-logo img {
+            width: 58px;
+            height: 42px;
+            object-fit: contain;
+          }
+
+          .annexure-document-title {
+            text-align: center;
+            font-size: 14px;
+            font-weight: bold;
+          }
+
+          .annexure-document-title div {
+            font-size: 8px;
+            font-weight: normal;
+            margin-top: 2px;
+          }
+
+          .annexure-document-serial {
+            position: absolute;
+            right: 0;
+            top: 8px;
+            font-size: 8px;
+            font-weight: bold;
           }
 
           .annexure-title {
@@ -2417,12 +2652,23 @@ Views._printFundRequest = async function (id) {
         <section class="page">
 
 
-          <div class="document-title">
-            Fund Request
-          </div>
+          <div class="document-header">
+            <div class="document-header-logo">
+              <img src="/logo.png" alt="Dharti">
+            </div>
 
-          <div class="document-subtitle">
-            SiteXpense
+            <div class="document-header-title">
+              <div class="approval-header">
+                <div class="document-title">
+                  APPROVAL NOTE
+                </div>
+                <div class="sr-number">
+                  SR. NO. ${esc(documentSerial)}
+                </div>
+              </div>              
+            </div>
+
+            
           </div>
 
 
@@ -2452,22 +2698,23 @@ Views._printFundRequest = async function (id) {
 
 
           <div class="to-block">
+            <div>
+              <strong>To:</strong>
+                Hon. Chairman Sir, Managing Director Sir
+            </div>
 
-            <strong>To:</strong>
-
-            Hon. Chairman Sir, Managing Director Sir
-
+            <div>
+              <strong>From:</strong>
+              Purchase Dept.
+            </div>
           </div>
 
-
           <div class="subject">
-
             <span class="subject-label">
               Subject:
             </span>
 
-            Request for Funds - Site Expense
-
+            ${esc(subjectText)}
           </div>
 
 
@@ -2520,6 +2767,10 @@ Views._printFundRequest = async function (id) {
             </div>
 
           </div>
+          <div class="amount-in-words">
+            <strong>Amount in Words:</strong>
+            ${esc(amountInWordsIndian(total))}
+          </div>
 
 
           <div class="request-note">
@@ -2532,9 +2783,25 @@ Views._printFundRequest = async function (id) {
 
           </div>
 
+          <div class="payment-details">
+            <div>
+              <strong>Payment To:</strong>
+              Vipul Save
+            </div>
+
+            <div>
+              <strong>Paid From:</strong>
+              Dharti Dredging and Infrastructure Ltd.
+            </div>
+
+            <div>
+              <strong>Mode:</strong>
+              NEFT / RTGS
+            </div>
+          </div>
 
           <!-- =================================================
-               DIGITAL VERIFICATION
+              DIGITAL VERIFICATION
           ================================================= -->
 
           <div class="signature-area">
@@ -2545,27 +2812,8 @@ Views._printFundRequest = async function (id) {
 
             <div class="digital-signatures">
 
-              <!-- ACCOUNTS -->
-              <div class="digital-signature-box">
-
-                <div class="digital-signature-status">
-                  DIGITALLY VERIFIED
-                </div>
-
-                <div class="digital-signature-name">
-                  ${esc(accountsReviewerName || "—")}
-                </div>
-
-                <div class="digital-signature-role">
-                  Accounts Manager
-                </div>
-
-              </div>
-
-
               <!-- PURCHASE -->
               <div class="digital-signature-box">
-
                 <div class="digital-signature-status">
                   DIGITALLY VERIFIED
                 </div>
@@ -2577,13 +2825,11 @@ Views._printFundRequest = async function (id) {
                 <div class="digital-signature-role">
                   Purchase Reviewer
                 </div>
-
               </div>
 
 
               <!-- OPERATIONS -->
               <div class="digital-signature-box">
-
                 <div class="digital-signature-status">
                   DIGITALLY VERIFIED
                 </div>
@@ -2595,13 +2841,27 @@ Views._printFundRequest = async function (id) {
                 <div class="digital-signature-role">
                   Operations Reviewer
                 </div>
+              </div>
 
+
+              <!-- ACCOUNTS -->
+              <div class="digital-signature-box">
+                <div class="digital-signature-status">
+                  DIGITALLY VERIFIED
+                </div>
+
+                <div class="digital-signature-name">
+                  ${esc(accountsReviewerName || "—")}
+                </div>
+
+                <div class="digital-signature-role">
+                  Accounts Manager
+                </div>
               </div>
 
 
               <!-- ADMIN -->
               <div class="digital-signature-box">
-
                 <div class="digital-signature-status">
                   DIGITALLY VERIFIED
                 </div>
@@ -2613,12 +2873,11 @@ Views._printFundRequest = async function (id) {
                 <div class="digital-signature-role">
                   Admin
                 </div>
-
               </div>
 
             </div>
 
-
+          </div>
             <!-- =================================================
                  PHYSICAL SIGNATURES
             ================================================= -->
