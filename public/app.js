@@ -2527,8 +2527,7 @@ Views._printFundRequest = async function (id) {
           .annexure-document-serial {
             position: absolute;
             right: 0;
-            top: 8px;
-            transform: translateY(+50%);
+            top: 25px;
             font-size: 8px;
             font-weight: bold;
           }
