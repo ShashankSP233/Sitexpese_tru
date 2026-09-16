@@ -1988,7 +1988,7 @@ Views._printFundRequest = async function (id) {
     ========================================================= */
 
     const w = window.open(
-      "",
+      "SiteXpense",
       "_blank",
       "width=1100,height=800",
     );
@@ -2390,13 +2390,14 @@ Views._printFundRequest = async function (id) {
           .signature-line {
             border-top: 1px solid #111;
 
-            margin-top: 40px;
+            margin-top: 60px;
 
-            margin-bottom: 7px;
+            margin-bottom: 10px;
           }
 
           .signature-name {
             font-weight: bold;
+            margin-top: 10px;
 
             font-size: 11px;
           }
