@@ -1921,7 +1921,6 @@ Views._printFundRequest = async function (id) {
 
               <div class="annexure-document-title">
                 APPROVAL NOTE
-                <div>SiteXpense</div>
               </div>
 
               <div class="annexure-document-serial">
@@ -2527,6 +2526,7 @@ Views._printFundRequest = async function (id) {
             position: absolute;
             right: 0;
             top: 8px;
+            transform: translateY(+50%);
             font-size: 8px;
             font-weight: bold;
           }
