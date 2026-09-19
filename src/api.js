@@ -1141,6 +1141,46 @@ router.post('/payments/download', requireRole('accounts', 'admin'), async (req, 
   await buildPaymentZip(res, expenses);
 });
 
+// Download selected vouchers that have completed the approval workflow.
+router.post('/vouchers/download', requireRole('accounts', 'admin'), async (req, res) => {
+  const ids = Array.isArray(req.body.ids)
+    ? [...new Set(req.body.ids.map(String).filter(Boolean))]
+    : [];
+
+  if (!ids.length) {
+    return res.status(400).json({ error: 'No vouchers selected' });
+  }
+
+  const m = await nameMaps();
+  const expenses = [];
+
+  for (const id of ids) {
+    const e = await db.prepare('SELECT * FROM expenses WHERE id=?').get(id);
+
+    if (!e) {
+      return res.status(404).json({ error: 'One or more selected vouchers were not found' });
+    }
+
+    if (!['Accounts Reviewed', 'Approved', 'Payment Approved'].includes(e.status) || !canSeeExpense(req.user, e)) {
+      return res.status(403).json({
+        error: `Voucher ${e.voucher_no} is not available for download`
+      });
+    }
+
+    const p = m.proj[e.project_id];
+
+    expenses.push({
+      ...e,
+      categoryName: m.cat[e.category_id] || '',
+      locationName: m.loc[e.location_id] || '',
+      createdByName: m.usr[e.created_by] || '',
+      project: p || null,
+    });
+  }
+
+  await buildPaymentZip(res, expenses);
+});
+
 // ================================================================ PAYMENTS
 
 // Accounts confirms that payment has been processed.

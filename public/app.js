@@ -245,6 +245,7 @@ const can = {
   audit: () => S.user.role === "admin",
   addFunds: () => ["admin", "accounts"].includes(S.user.role),
   payments: () => ["accounts", "admin"].includes(S.user.role),
+  downloadVouchers: () => ["accounts", "admin"].includes(S.user.role),
 
   // New Fund Request workflow
   allFundRequests: () => ["admin", "accounts"].includes(S.user.role),
@@ -336,6 +337,8 @@ async function buildNav() {
     );
   if (can.payments())
     items.push({ id: "payments", ic: "✔", label: "Approved Payments" });
+  if (can.downloadVouchers())
+    items.push({ id: "downloadVouchers", ic: "⇩", label: "Download Vouchers" });
   if (can.fundRequests())
     items.push({
       id: "fundRequests",
@@ -385,6 +388,8 @@ async function buildNav() {
     
   if (can.funds()) bn.push({ id: "funds", ic: "₹", label: "Balance" });
   if (can.payments()) bn.push({ id: "payments", ic: "✔", label: "Pay" });
+  if (can.downloadVouchers())
+    bn.push({ id: "downloadVouchers", ic: "⇩", label: "Vouchers" });
   $("#botnav").innerHTML = bn
     .map(
       (it) =>
@@ -421,6 +426,7 @@ const TITLES = {
   masters: ["Masters", "Categories, projects & locations"],
   audit: ["Audit Trail", "Complete activity log"],
   payments: ["Approved Payments", "Select approved vouchers to pay"],
+  downloadVouchers: ["Download Vouchers", "Select vouchers that completed Accounts review"],
   paymentReceived: [
     "Payment Received",
     "Confirm payments received after Accounts approval",
@@ -811,6 +817,96 @@ Views.payments = async function () {
       </div>
     </div>
     <div class="table-wrap"><table><thead><tr><th><input type="checkbox" onclick="Views._toggleAllPay(this)"></th><th>Voucher</th><th>Date</th><th>Details</th><th>Project</th><th class="num">Amount</th><th></th></tr></thead><tbody>${rows}</tbody></table></div></div>`;
+};
+
+Views.downloadVouchers = async function () {
+  const ex = await api("GET", "/expenses");
+  Views._downloadVouchers = ex.filter((e) =>
+    ["Accounts Reviewed", "Approved", "Payment Approved"].includes(e.status),
+  );
+
+  const projects = [
+    ...new Map(
+      Views._downloadVouchers
+        .filter((e) => e.project_id)
+        .map((e) => [e.project_id, { id: e.project_id, code: e.projectCode }]),
+    ).values(),
+  ];
+
+  const statuses = [...new Set(Views._downloadVouchers.map((e) => e.status))];
+  const projectOptions = projects
+    .sort((a, b) => String(a.code).localeCompare(String(b.code)))
+    .map((p) => `<option value="${esc(p.id)}">${esc(p.code || "—")}</option>`)
+    .join("");
+  const statusOptions = statuses
+    .sort()
+    .map((status) => `<option value="${esc(status)}">${esc(status)}</option>`)
+    .join("");
+
+  $("#content").innerHTML = `
+    <div class="card card-pad" style="margin-bottom:16px">
+      <div class="toolbar">
+        <input id="dv-q" placeholder="Search voucher / details…" oninput="Views._filterDownloadVouchers()">
+        <select id="dv-project" onchange="Views._filterDownloadVouchers()"><option value="">All projects</option>${projectOptions}</select>
+        <select id="dv-status" onchange="Views._filterDownloadVouchers()"><option value="">All completed statuses</option>${statusOptions}</select>
+        <input id="dv-from" type="date" title="From date" onchange="Views._filterDownloadVouchers()">
+        <input id="dv-to" type="date" title="To date" onchange="Views._filterDownloadVouchers()">
+        <button class="btn btn-primary" onclick="Views._downloadSelectedVouchers()">Download Selected</button>
+      </div>
+      <div id="dv-count" class="csub" style="margin:0 0 12px"></div>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th><input type="checkbox" onclick="Views._toggleAllDownloadVouchers(this)"></th><th>Voucher</th><th>Date</th><th>Details</th><th>Project</th><th class="num">Amount</th><th>Status</th><th></th></tr></thead>
+          <tbody id="dv-body"></tbody>
+        </table>
+      </div>
+    </div>`;
+
+  Views._filterDownloadVouchers();
+};
+
+Views._filterDownloadVouchers = function () {
+  let rows = Views._downloadVouchers || [];
+  const q = ($("#dv-q")?.value || "").trim().toLowerCase();
+  const project = $("#dv-project")?.value || "";
+  const status = $("#dv-status")?.value || "";
+  const from = $("#dv-from")?.value || "";
+  const to = $("#dv-to")?.value || "";
+
+  if (q) {
+    rows = rows.filter((e) =>
+      [e.voucher_no, e.details, e.projectCode]
+        .map((value) => String(value || "").toLowerCase())
+        .some((value) => value.includes(q)),
+    );
+  }
+  if (project) rows = rows.filter((e) => String(e.project_id) === project);
+  if (status) rows = rows.filter((e) => e.status === status);
+  if (from) rows = rows.filter((e) => String(e.date || "") >= from);
+  if (to) rows = rows.filter((e) => String(e.date || "") <= to);
+
+  const total = rows.reduce((sum, e) => sum + (+e.amount || 0), 0);
+  $("#dv-count").textContent = `${rows.length} voucher(s) · ${money(total)}`;
+  $("#dv-body").innerHTML = rows
+    .map(
+      (e) => `<tr>
+        <td><input type="checkbox" class="dv-cb" value="${esc(e.id)}"></td>
+        <td class="mono">${esc(e.voucher_no)}</td>
+        <td>${fmtDate(e.date)}</td>
+        <td>${esc((e.details || "").slice(0, 40))}</td>
+        <td>${esc(e.projectCode || "—")}</td>
+        <td class="num">${money(e.amount)}</td>
+        <td>${pill(e.status)}</td>
+        <td><button class="btn btn-ghost btn-sm" onclick="Detail.open('${e.id}')">View</button></td>
+      </tr>`,
+    )
+    .join("") || '<tr><td colspan="8"><div class="empty">No completed vouchers match these filters.</div></td></tr>';
+};
+
+Views._toggleAllDownloadVouchers = function (master) {
+  $$(".dv-cb").forEach((cb) => {
+    cb.checked = master.checked;
+  });
 };
 
 Views.fundRequests = async function () {
@@ -3429,6 +3525,49 @@ Views._downloadSelectedPayments = async function () {
     a.click();
     a.remove();
 
+    URL.revokeObjectURL(url);
+  } catch (e) {
+    toast(e.message, "err");
+  }
+};
+
+Views._downloadSelectedVouchers = async function () {
+  const ids = $$(".dv-cb")
+    .filter((cb) => cb.checked)
+    .map((cb) => cb.value);
+
+  if (!ids.length) {
+    toast("Select at least one voucher", "err");
+    return;
+  }
+
+  try {
+    const r = await fetch("/api/vouchers/download", {
+      method: "POST",
+      credentials: "same-origin",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ ids }),
+    });
+
+    if (r.status === 401) {
+      showLogin();
+      throw new Error("Session expired");
+    }
+
+    if (!r.ok) {
+      const ct = r.headers.get("content-type") || "";
+      const data = ct.includes("json") ? await r.json() : await r.text();
+      throw new Error((data && data.error) || `HTTP ${r.status}`);
+    }
+
+    const blob = await r.blob();
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `siteexpense-vouchers-${Date.now()}.zip`;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
     URL.revokeObjectURL(url);
   } catch (e) {
     toast(e.message, "err");
