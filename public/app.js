@@ -523,9 +523,11 @@ function overallSlaBadge(e) {
   return '';
 }
 
-function expenseTable(rows) {
+function expenseTable(rows, opts) {
+  opts = opts || {};
+  const showReviewActions = opts.reviewActions === true;
   if (!rows.length) return '<div class="empty">No matching expenses.</div>';
-  return `<div class="table-wrap"><table><thead><tr><th>Voucher</th><th>Date</th><th>Details</th><th>Category</th><th>Project</th><th class="num">Amount</th><th>Status</th></tr></thead><tbody>${rows.map((e) => `<tr class="click" onclick="Detail.open('${e.id}')"><td class="mono">${esc(e.voucher_no)}</td><td>${fmtDate(e.date)}</td><td>${esc((e.details || "").slice(0, 42))}${(e.details || "").length > 42 ? "…" : ""} ${e.evidenceCount ? `<span class="tag">📎${e.evidenceCount}</span>` : ""}${e.paid ? ' <span class="tag">💰 Paid</span>' : ""} ${previousDelayBadge(e)} ${overallSlaBadge(e)} ${slaBadge(e)}</td><td><span class="tag">${esc(e.categoryName)}</span></td><td>${esc(e.projectCode)}</td><td class="num">${money(e.amount)}</td><td>${pill(e.status)}</td></tr>`).join("")}</tbody></table></div>`;
+  return `<div class="table-wrap"><table><thead><tr><th>Voucher</th><th>Date</th><th>Details</th><th>Category</th><th>Project</th><th class="num">Amount</th><th>Status</th>${showReviewActions ? "<th>Actions</th>" : ""}</tr></thead><tbody>${rows.map((e) => `<tr class="click" onclick="Detail.open('${e.id}')"><td class="mono">${esc(e.voucher_no)}</td><td>${fmtDate(e.date)}</td><td>${esc((e.details || "").slice(0, 42))}${(e.details || "").length > 42 ? "…" : ""} ${e.evidenceCount ? `<span class="tag">📎${e.evidenceCount}</span>` : ""}${e.paid ? ' <span class="tag">💰 Paid</span>' : ""} ${previousDelayBadge(e)} ${overallSlaBadge(e)} ${slaBadge(e)}</td><td><span class="tag">${esc(e.categoryName)}</span></td><td>${esc(e.projectCode)}</td><td class="num">${money(e.amount)}</td><td>${pill(e.status)}</td>${showReviewActions ? `<td>${e.status === "Accounts Reviewed" ? `<div class="queue-actions" onclick="event.stopPropagation()"><button class="btn btn-primary btn-sm" style="background:var(--green)" onclick="Detail.advance('${e.id}','approve')">Accept</button><button class="btn btn-ghost btn-sm" style="color:var(--red)" onclick="Detail.reject('${e.id}')">Reject</button><button class="btn btn-ghost btn-sm" onclick="Detail.raiseQuery('${e.id}')">Query</button></div>` : ""}</td>` : ""}</tr>`).join("")}</tbody></table></div>`;
 }
 
 /* ============ views ============ */
@@ -3659,7 +3661,7 @@ Views.review = async function () {
       admin: "All items in the review pipeline.",
     }[S.user.role] || "";
   $("#content").innerHTML =
-    `<div class="card card-pad" style="margin-bottom:16px;display:flex;align-items:center"><div class="csub" style="margin:0">${esc(hint)}</div><span class="tag" style="margin-left:auto">${rows.length} pending</span></div><div class="card">${expenseTable(rows)}</div>`;
+      `<div class="card card-pad" style="margin-bottom:16px;display:flex;align-items:center"><div class="csub" style="margin:0">${esc(hint)}</div><span class="tag" style="margin-left:auto">${rows.length} pending</span></div><div class="card">${expenseTable(rows, { reviewActions: S.user.role === "accounts" })}</div>`;
 };
 
 Views.funds = async function () {
