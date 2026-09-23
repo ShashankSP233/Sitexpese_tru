@@ -543,7 +543,7 @@ Views.dashboard = async function () {
     .filter(
       (r) =>
         ["Printed", "Completed"].includes(r.status) &&
-        !String(r.request_no || "").trim().toUpperCase().startsWith("APS"),
+        !/^(ARP|APR)/.test(String(r.request_no || "").trim().toUpperCase()),
     )
     .reduce((s, r) => s + (+r.total || 0), 0);
   // P5/18 — "In Review" reflects only vouchers that currently have an active (open) query
