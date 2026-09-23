@@ -559,9 +559,7 @@ Views.dashboard = async function () {
     });
   const t = fundsData.totals; // role-aware ledger: {received, spent, balance, [distributed]}
   const role = S.user.role;
-  const given = t.received || 0,
-    balance = role === "accounts" ? totalApproved - total : t.balance || 0,
-    spent = t.spent || 0;
+  
   const recvLbl =
     role === "site"
       ? "allocated to this site"
@@ -576,6 +574,9 @@ Views.dashboard = async function () {
       : `${money(spent)} spent`;
   const adminWallet =
     role === "accounts" ? fundsData.adminFund?.balance || 0 : given;
+  const given = t.received || 0,
+    balance = role === "accounts" ? adminWallet - totalApproved : t.balance || 0,
+    spent = t.spent || 0;
   $("#content").innerHTML = `
     <div class="grid stat-row" style="margin-bottom:20px">
       <div class="stat accent"><div class="lab">Total Expenses</div><div class="val">${money(total)}</div><div class="sub2">${ex.length} vouchers</div></div>
