@@ -2001,6 +2001,10 @@ Views._printFundRequest = async function (id) {
                   ${esc(e.details || "—")}
                 </td>
 
+                <td>
+                  ${["yes", "true", "1"].includes(String(e.bill_received || "").toLowerCase()) ? "Yes" : "No"}
+                </td>
+
                 <td class="num">
                   <strong>${money(e.amount)}</strong>
                 </td>
@@ -2053,6 +2057,7 @@ Views._printFundRequest = async function (id) {
                   <th>Site / Location</th>
                   <th>Category</th>
                   <th>Details</th>
+                  <th>Bill</th>
                   <th class="num">Amount</th>
                 </tr>
               </thead>
@@ -2063,7 +2068,7 @@ Views._printFundRequest = async function (id) {
 
               <tfoot>
                 <tr>
-                  <td colspan="7" class="num">
+                  <td colspan="8" class="num">
                     <strong>Project Total</strong>
                   </td>
 
