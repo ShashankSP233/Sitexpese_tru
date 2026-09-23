@@ -543,7 +543,7 @@ Views.dashboard = async function () {
     .filter(
       (r) =>
         ["Printed", "Completed"].includes(r.status) &&
-        !/^(ARP|APR)/.test(String(r.request_no || "").trim().toUpperCase()),
+        !String(r.request_no || "").trim().toUpperCase().startsWith("APS"),
     )
     .reduce((s, r) => s + (+r.total || 0), 0);
   // P5/18 — "In Review" reflects only vouchers that currently have an active (open) query
@@ -559,7 +559,10 @@ Views.dashboard = async function () {
     });
   const t = fundsData.totals; // role-aware ledger: {received, spent, balance, [distributed]}
   const role = S.user.role;
-  
+  const given = t.received || 0,
+    adminWallet = role === "accounts" ? fundsData.adminFund?.balance || 0 : given,
+    balance = role === "accounts" ? adminWallet - totalApproved : t.balance || 0,
+    spent = t.spent || 0;
   const recvLbl =
     role === "site"
       ? "allocated to this site"
@@ -568,15 +571,10 @@ Views.dashboard = async function () {
         : "released to projects";
   const balSub =
     role === "accounts"
-      ? `${money(totalApproved)} approved`
+      ? `${money(adminWallet)} wallet - ${money(totalApproved)} approved`
       : role === "checker"
       ? `${money(t.distributed || 0)} to sites`
       : `${money(spent)} spent`;
-  const adminWallet =
-    role === "accounts" ? fundsData.adminFund?.balance || 0 : given;
-  const given = t.received || 0,
-    balance = role === "accounts" ? adminWallet - totalApproved : t.balance || 0,
-    spent = t.spent || 0;
   $("#content").innerHTML = `
     <div class="grid stat-row" style="margin-bottom:20px">
       <div class="stat accent"><div class="lab">Total Expenses</div><div class="val">${money(total)}</div><div class="sub2">${ex.length} vouchers</div></div>
