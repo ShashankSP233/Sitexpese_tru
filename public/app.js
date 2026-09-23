@@ -533,11 +533,19 @@ function expenseTable(rows, opts) {
 /* ============ views ============ */
 const Views = {};
 Views.dashboard = async function () {
-  const [ex, fundsData] = await Promise.all([
+  const [ex, fundsData, fundRequests] = await Promise.all([
     api("GET", "/expenses"),
     can.funds() ? api("GET", "/funds") : Promise.resolve({ totals: {} }),
+    S.user.role === "accounts" ? api("GET", "/fund-requests") : Promise.resolve([]),
   ]);
   const total = ex.reduce((s, e) => s + (+e.amount || 0), 0);
+  const totalApproved = fundRequests
+    .filter(
+      (r) =>
+        ["Printed", "Completed"].includes(r.status) &&
+        !String(r.request_no || "").trim().toUpperCase().startsWith("APS"),
+    )
+    .reduce((s, r) => s + (+r.total || 0), 0);
   // P5/18 — "In Review" reflects only vouchers that currently have an active (open) query
   const inReview = ex.filter((e) => e.status === "Query").length;
   // P3/16 — dashboard lists only not-yet-approved vouchers, with queried ones pinned on top
@@ -552,7 +560,7 @@ Views.dashboard = async function () {
   const t = fundsData.totals; // role-aware ledger: {received, spent, balance, [distributed]}
   const role = S.user.role;
   const given = t.received || 0,
-    balance = t.balance || 0,
+    balance = role === "accounts" ? totalApproved - total : t.balance || 0,
     spent = t.spent || 0;
   const recvLbl =
     role === "site"
@@ -561,15 +569,20 @@ Views.dashboard = async function () {
         ? "received from accounts"
         : "released to projects";
   const balSub =
-    role === "checker"
+    role === "accounts"
+      ? `${money(totalApproved)} approved`
+      : role === "checker"
       ? `${money(t.distributed || 0)} to sites`
       : `${money(spent)} spent`;
+  const adminWallet =
+    role === "accounts" ? fundsData.adminFund?.balance || 0 : given;
   $("#content").innerHTML = `
     <div class="grid stat-row" style="margin-bottom:20px">
       <div class="stat accent"><div class="lab">Total Expenses</div><div class="val">${money(total)}</div><div class="sub2">${ex.length} vouchers</div></div>
-      <div class="stat green"><div class="lab">Funds Received</div><div class="val">${money(given)}</div><div class="sub2">${recvLbl}</div></div>
+      <div class="stat green"><div class="lab">${role === "accounts" ? "Total Approved" : "Funds Received"}</div><div class="val">${money(role === "accounts" ? totalApproved : given)}</div><div class="sub2">${role === "accounts" ? "printed or completed" : recvLbl}</div></div>
+      ${role === "accounts" ? `<div class="stat amber"><div class="lab">Admin Wallet</div><div class="val" style="color:${adminWallet >= 0 ? "var(--green)" : "var(--red)"}">${money(adminWallet)}</div><div class="sub2">available to release</div></div>` : ""}
       <div class="stat blue"><div class="lab">Balance In Hand</div><div class="val" style="color:${balance >= 0 ? "var(--green)" : "var(--red)"}">${money(balance)}</div><div class="sub2">${balSub}</div></div>
-      <div class="stat amber"><div class="lab">In Review</div><div class="val">${inReview}</div><div class="sub2">active queries</div></div>
+      ${role !== "accounts" ? `<div class="stat amber"><div class="lab">In Review</div><div class="val">${inReview}</div><div class="sub2">active queries</div></div>` : ""}
     </div>
     <div class="card"><div class="card-pad" style="display:flex;align-items:center;border-bottom:1px solid var(--line)"><div><h3>Pending Vouchers</h3><div class="csub" style="margin:0">Not yet approved · queries shown first</div></div><button class="btn btn-ghost btn-sm" style="margin-left:auto" onclick="go('expenses')">View all →</button></div>${expenseTable(pending)}</div>`;
   if (can.create())
