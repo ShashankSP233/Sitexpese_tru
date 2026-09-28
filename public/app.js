@@ -543,7 +543,7 @@ Views.dashboard = async function () {
     .filter(
       (r) =>
         ["Printed", "Completed"].includes(r.status) &&
-        !String(r.request_no || "").trim().toUpperCase().startsWith("ARP"),
+        !String(r.request_no || "").trim().toUpperCase().startsWith("APR"),
     )
     .reduce((s, r) => s + (+r.total || 0), 0);
   const totalPaid = fundRequests
