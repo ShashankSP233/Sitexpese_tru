@@ -643,11 +643,24 @@ router.post('/queries/:id/attach', upload.array('files', 12), async (req, res) =
 
 // ================================================================ FUNDS & BALANCE
 router.get('/funds', async (req, res) => {
-  if (req.user.role === 'account_checker') return res.status(403).json({ error: 'Not permitted' });
+  if (!['site', 'checker', 'accounts', 'admin'].includes(req.user.role)) {
+    return res.status(403).json({ error: 'Not permitted' });
+  }
   const m = await nameMaps();
   const s = scopeOf(req.user);
   const role = req.user.role;
-  const projFilter = s.all ? (await db.prepare('SELECT id FROM projects WHERE active=1').all()).map(r => r.id) : s.ids;
+  let projFilter = s.all ? (await db.prepare('SELECT id FROM projects WHERE active=1').all()).map(r => r.id) : s.ids;
+  if (!['accounts', 'admin'].includes(role)) {
+    const adminFundProject = await db.prepare(`
+      SELECT id
+      FROM projects
+      WHERE code = 'ADMIN-FUND'
+      LIMIT 1
+    `).get();
+    if (adminFundProject) {
+      projFilter = projFilter.filter(projectId => projectId !== adminFundProject.id);
+    }
+  }
   const inq = projFilter.length ? projFilter.map(() => '?').join(',') : "''";
 
   const fundsRows = await db.prepare(`SELECT * FROM funds WHERE project_id IN (${inq}) ORDER BY created_at DESC`).all(...projFilter);

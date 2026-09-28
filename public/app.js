@@ -543,8 +543,11 @@ Views.dashboard = async function () {
     .filter(
       (r) =>
         ["Printed", "Completed"].includes(r.status) &&
-        !String(r.request_no || "").trim().toUpperCase().startsWith("APS"),
+        !String(r.request_no || "").trim().toUpperCase().startsWith("ARP"),
     )
+    .reduce((s, r) => s + (+r.total || 0), 0);
+  const totalPaid = fundRequests
+    .filter((r) => r.status === "Completed")
     .reduce((s, r) => s + (+r.total || 0), 0);
   // P5/18 — "In Review" reflects only vouchers that currently have an active (open) query
   const inReview = ex.filter((e) => e.status === "Query").length;
@@ -560,8 +563,7 @@ Views.dashboard = async function () {
   const t = fundsData.totals; // role-aware ledger: {received, spent, balance, [distributed]}
   const role = S.user.role;
   const given = t.received || 0,
-    adminWallet = role === "accounts" ? fundsData.adminFund?.balance || 0 : given,
-    balance = role === "accounts" ? adminWallet - totalApproved : t.balance || 0,
+    balance = role === "accounts" ? totalPaid - totalApproved : t.balance || 0,
     spent = t.spent || 0;
   const recvLbl =
     role === "site"
@@ -571,7 +573,7 @@ Views.dashboard = async function () {
         : "released to projects";
   const balSub =
     role === "accounts"
-      ? `${money(adminWallet)} wallet - ${money(totalApproved)} approved`
+      ? `${money(totalPaid)} paid − ${money(totalApproved)} approved`
       : role === "checker"
       ? `${money(t.distributed || 0)} to sites`
       : `${money(spent)} spent`;
@@ -579,7 +581,7 @@ Views.dashboard = async function () {
     <div class="grid stat-row" style="margin-bottom:20px">
       <div class="stat accent"><div class="lab">Total Expenses</div><div class="val">${money(total)}</div><div class="sub2">${ex.length} vouchers</div></div>
       <div class="stat green"><div class="lab">${role === "accounts" ? "Total Approved" : "Funds Received"}</div><div class="val">${money(role === "accounts" ? totalApproved : given)}</div><div class="sub2">${role === "accounts" ? "printed or completed" : recvLbl}</div></div>
-      ${role === "accounts" ? `<div class="stat amber"><div class="lab">Admin Wallet</div><div class="val" style="color:${adminWallet >= 0 ? "var(--green)" : "var(--red)"}">${money(adminWallet)}</div><div class="sub2">available to release</div></div>` : ""}
+      ${role === "accounts" ? `<div class="stat accent"><div class="lab">Total Paid</div><div class="val">${money(totalPaid)}</div><div class="sub2">completed fund requests</div></div>` : ""}
       <div class="stat blue"><div class="lab">Balance In Hand</div><div class="val" style="color:${balance >= 0 ? "var(--green)" : "var(--red)"}">${money(balance)}</div><div class="sub2">${balSub}</div></div>
       ${role !== "accounts" ? `<div class="stat amber"><div class="lab">In Review</div><div class="val">${inReview}</div><div class="sub2">active queries</div></div>` : ""}
     </div>
@@ -836,7 +838,7 @@ Views.payments = async function () {
 Views.downloadVouchers = async function () {
   const ex = await api("GET", "/expenses");
   Views._downloadVouchers = ex.filter((e) =>
-    ["Accounts Reviewed", "Approved", "Payment Approved"].includes(e.status),
+    ["Accounts Reviewed", "Approved", "Payment Approved", "Paid"].includes(e.status),
   );
 
   const projects = [
