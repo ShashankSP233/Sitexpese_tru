@@ -1174,7 +1174,7 @@ router.post('/vouchers/download', requireRole('accounts', 'admin'), async (req, 
       return res.status(404).json({ error: 'One or more selected vouchers were not found' });
     }
 
-    if (!['Accounts Reviewed', 'Approved', 'Payment Approved'].includes(e.status) || !canSeeExpense(req.user, e)) {
+    if (!['Accounts Reviewed', 'Approved', 'Payment Approved', 'Paid'].includes(e.status) || !canSeeExpense(req.user, e)) {
       return res.status(403).json({
         error: `Voucher ${e.voucher_no} is not available for download`
       });
