@@ -706,7 +706,8 @@ router.get('/funds', async (req, res) => {
     const p = m.proj[pid] || {}, given = injByProj[pid] || 0, spent = spentByProj[pid] || 0;
     return { projectId: pid, code: p.code, name: p.name, given, spent, balance: given - spent };
   });
-  const totals = balances.reduce((a, b) => ({ received: a.received + b.given, spent: a.spent + b.spent, balance: a.balance + b.balance }), { received: 0, spent: 0, balance: 0 });
+  const projectBalances = balances.filter(b => b.code !== 'ADMIN-FUND');
+  const totals = projectBalances.reduce((a, b) => ({ received: a.received + b.given, spent: a.spent + b.spent, balance: a.balance + b.balance }), { received: 0, spent: 0, balance: 0 });
     // ADMIN FUND -- separate wallet balance
   let adminFund = null;
 
