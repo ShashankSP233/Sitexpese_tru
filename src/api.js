@@ -1421,7 +1421,10 @@ router.get('/analytics', requireRole('accounts', 'admin'), async (req, res) => {
   // ---- budget vs actual, current month (#9) ----
   const curMonth = new Date().toISOString().slice(0, 7);
   const spendThisMonth = {};
-  (await db.prepare(`SELECT project_id, SUM(amount) v FROM expenses WHERE ${SPEND} AND substr(date,1,7)=? GROUP BY project_id`).all(curMonth))
+  (await db.prepare(`SELECT project_id, SUM(amount) v FROM expenses
+    WHERE ${SPEND}
+      AND category_id IN (SELECT id FROM categories WHERE LOWER(name) IN ('food','lpg','water'))
+      AND substr(date,1,7)=? GROUP BY project_id`).all(curMonth))
     .forEach(r => spendThisMonth[r.project_id] = toRupees(r.v));
   const budgetVsActual = (await db.prepare('SELECT project_id, budget_amount FROM project_budgets WHERE period=?').all(curMonth))
     .map(b => {
