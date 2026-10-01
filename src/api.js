@@ -1405,7 +1405,12 @@ router.get('/analytics', requireRole('accounts', 'admin'), async (req, res) => {
   // ---- money health ----
   const users = {}; (await db.prepare('SELECT id,name,role FROM users').all()).forEach(u => users[u.id] = u);
   const spentByUser = {}; (await db.prepare(`SELECT created_by, SUM(amount) v FROM expenses WHERE ${SPEND} GROUP BY created_by`).all()).forEach(r => spentByUser[r.created_by] = toRupees(r.v));
-  const releasedRow = await db.prepare("SELECT COALESCE(SUM(amount),0) v FROM funds WHERE kind='injection'").get();
+  const releasedRow = await db.prepare(`
+    SELECT COALESCE(SUM(f.amount),0) v
+    FROM funds f
+    JOIN projects p ON p.id=f.project_id
+    WHERE f.kind='injection' AND p.code!='ADMIN-FUND'
+  `).get();
   const released = toRupees(releasedRow.v);
   const allocationBySite = (await db.prepare("SELECT to_user, SUM(amount) v FROM funds WHERE kind='allocation' GROUP BY to_user").all())
     .filter(r => r.to_user).map(r => { const allocRs = toRupees(r.v), sp = spentByUser[r.to_user] || 0; return { name: (users[r.to_user] || {}).name || '—', allocated: allocRs, spent: sp, balance: allocRs - sp }; })
