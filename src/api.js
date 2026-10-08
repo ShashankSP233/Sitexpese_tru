@@ -66,6 +66,13 @@ function inScope(user, projectId) {
   const s = scopeOf(user);
   return s.all || s.ids.includes(projectId);
 }
+// ---- query workflow access ----
+// "In the workflow" = has access to this voucher (project scope; site users only
+// their own vouchers). Everyone in the workflow can see + reply + attach on a query;
+// only reviewers (not site) can mark it resolved.
+const QUERY_ROLES = ['site', 'checker', 'purchase', 'operations', 'accounts', 'account_checker', 'admin'];
+const RESOLVER_ROLES = ['checker', 'purchase', 'operations', 'accounts', 'account_checker', 'admin'];
+const inQueryWorkflow = (user, e) => !!e && QUERY_ROLES.includes(user.role) && canSeeExpense(user, e);
 
 // ---------------------------------------------------------------- lookups for display
 async function nameMaps() {
@@ -581,8 +588,8 @@ router.post('/queries/:id/reply', async (req, res) => {
   const q = await db.prepare('SELECT * FROM queries WHERE id=?').get(req.params.id);
   if (!q) return res.status(404).json({ error: 'Not found' });
   const eR = await db.prepare('SELECT * FROM expenses WHERE id=?').get(q.expense_id);
-  const allowed = [q.assigned_to, q.raised_by].includes(req.user.id) || req.user.role === 'admin' || (eR && eR.created_by === req.user.id);
-  if (!allowed) return res.status(403).json({ error: 'Not permitted' });
+  if (!inQueryWorkflow(req.user, eR)) return res.status(403).json({ error: 'Not permitted' });
+  if (q.status !== 'Open') return res.status(409).json({ error: 'Query is closed' });
   const text = (req.body.text || '').trim();
   if (!text) return res.status(400).json({ error: 'Empty reply' });
   await db.prepare('INSERT INTO query_messages (id,query_id,by_user,text,at) VALUES (?,?,?,?,?)')
@@ -593,8 +600,9 @@ router.post('/queries/:id/resolve', async (req, res) => {
   const q = await db.prepare('SELECT * FROM queries WHERE id=?').get(req.params.id);
   if (!q) return res.status(404).json({ error: 'Not found' });
   const e = await db.prepare('SELECT * FROM expenses WHERE id=?').get(q.expense_id);
-  const allowed = q.assigned_to === req.user.id || req.user.role === 'admin' || (e && e.created_by === req.user.id);
-  if (!allowed) return res.status(403).json({ error: 'Only the voucher owner or assignee can resolve' });
+  if (!inQueryWorkflow(req.user, e) || !RESOLVER_ROLES.includes(req.user.role))
+    return res.status(403).json({ error: 'Only a reviewer assigned to this voucher can resolve a query' });
+  if (q.status !== 'Open') return res.status(409).json({ error: 'Query is already resolved' });
   // Delay justification -- an overdue query cannot be resolved without a reason for the delay
   const qsla = await computeSla(e);
   const overdue = e.status === 'Query' && qsla && Date.now() > qsla.dueAt;
@@ -625,8 +633,8 @@ router.post('/queries/:id/attach', upload.array('files', 12), async (req, res) =
   const q = await db.prepare('SELECT * FROM queries WHERE id=?').get(req.params.id);
   if (!q) return res.status(404).json({ error: 'Not found' });
   const e = await db.prepare('SELECT * FROM expenses WHERE id=?').get(q.expense_id);
-  const allowed = [q.assigned_to, q.raised_by].includes(req.user.id) || req.user.role === 'admin' || (e && e.created_by === req.user.id);
-  if (!allowed) return res.status(403).json({ error: 'Not permitted' });
+  if (!inQueryWorkflow(req.user, e)) return res.status(403).json({ error: 'Not permitted' });
+  if (q.status !== 'Open') return res.status(409).json({ error: 'Query is closed' });
   const files = req.files || [];
   if (!files.length) return res.status(400).json({ error: 'No files attached' });
   for (const f of files) {

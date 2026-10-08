@@ -4416,14 +4416,11 @@ const Detail = {
     }
   },
   queryCard(q, e) {
-    const meCreator = !!(e && e.created_by === S.user.id);
-    const canResolve =
-      q.status === "Open" &&
-      (q.assigned_to === S.user.id || S.user.role === "admin" || meCreator);
-    const canReply =
-      q.status === "Open" &&
-      ([q.assigned_to, q.raised_by].includes(S.user.id) || meCreator);
-    return `<div class="query-item"><div style="display:flex;gap:8px;align-items:center;margin-bottom:6px"><span class="pill ${q.status === "Open" ? "p-qry" : "p-app"}">${q.status}</span><span class="csub" style="margin:0">${esc(q.raisedByName)} → ${esc(q.assignedToName)}</span></div>${q.thread.map((m) => `<div class="q-msg">${esc(m.text)}<div class="q-meta">${esc(m.byName)} · ${fmtDT(m.at)}</div></div>`).join("")}${canReply ? `<div style="margin-top:8px;display:flex;gap:8px"><input id="qr-${q.id}" placeholder="Reply…" style="flex:1;padding:8px 10px;border:1px solid var(--line);border-radius:7px"><button class="btn btn-ghost btn-sm" onclick="Detail.reply('${q.id}','${q.expense_id}')">Reply</button>${canResolve ? `<button class="btn btn-primary btn-sm" onclick="Detail.resolve('${q.id}','${q.expense_id}')">Resolve</button>` : ""}</div><div style="margin-top:6px"><input type="file" id="qf-${q.id}" accept="image/*,application/pdf" multiple style="display:none" onchange="Detail.attach('${q.id}','${q.expense_id}')"><button class="btn btn-ghost btn-sm" onclick="$('#qf-${q.id}').click()">📎 Add photo / PDF</button></div>` : ""}</div>`;
+    // Anyone who can open this voucher is in the workflow: they can reply/attach.
+    // Only reviewers (can.review) can resolve -- site users never see the button.
+    const canReply = q.status === "Open";
+    const canResolve = q.status === "Open" && can.review();
+    return `<div class="query-item"><div style="display:flex;gap:8px;align-items:center;margin-bottom:6px"><span class="pill ${q.status === "Open" ? "p-qry" : "p-app"}">${q.status}</span><span class="csub" style="margin:0">${esc(q.raisedByName)} → ${esc(q.assignedToName)}</span></div>${q.thread.map((m) => `<div class="q-msg">${esc(m.text)}<div class="q-meta">${esc(m.byName)} · ${fmtDT(m.at)}</div></div>`).join("")}${canReply ? `<div style="margin-top:8px;display:flex;gap:8px"><input id="qr-${q.id}" placeholder="Reply…" style="flex:1;padding:8px 10px;border:1px solid var(--line);border-radius:7px"><button class="btn btn-ghost btn-sm" onclick="Detail.reply('${q.id}','${q.expense_id}')">Reply</button></div><div style="margin-top:6px"><input type="file" id="qf-${q.id}" accept="image/*,application/pdf" multiple style="display:none" onchange="Detail.attach('${q.id}','${q.expense_id}')"><button class="btn btn-ghost btn-sm" onclick="$('#qf-${q.id}').click()">📎 Add photo / PDF</button></div>` : ""}${canResolve ? `<div style="margin-top:8px"><button class="btn btn-primary btn-sm" onclick="Detail.resolve('${q.id}','${q.expense_id}')">Resolve</button></div>` : ""}</div>`;
   },
   async reply(qid, eid) {
     const v = $("#qr-" + qid).value.trim();
