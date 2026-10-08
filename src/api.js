@@ -109,7 +109,9 @@ async function computeSla(e) {
 
   } else if (e.status === 'Submitted') {
     // Checker review starts from the current submission/re-submission time.
-    const anchor = e.submitted_at || e.created_at;
+    // If the voucher resumed after a query, the checker clock restarts from then.
+    const resumedAt = (JSON.parse(e.approvals || '{}').resumed || {}).at || 0;
+    const anchor = Math.max(e.submitted_at || e.created_at, resumedAt);
 
     const expDate = Date.parse((e.date || '') + 'T00:00:00');
 
@@ -141,7 +143,9 @@ async function computeSla(e) {
       'Accounts Reviewed': ap.accounts && ap.accounts.at
     };
 
-    const anchor = anchors[e.status];
+    // A voucher that resumed after a query restarts the approval clock from the resume time.
+    const resumedAt2 = (ap.resumed || {}).at || 0;
+    const anchor = anchors[e.status] ? Math.max(anchors[e.status], resumedAt2) : null;
 
     if (anchor) {
       return {
@@ -493,8 +497,11 @@ router.patch('/expenses/:id', async (req, res) => {
     b.date ?? e.date, b.amount != null ? toPaise(b.amount) : e.amount, b.categoryId ?? e.category_id,
     b.details ?? e.details, locationId, b.expenseDoneBy ?? e.expense_done_by,
     b.billReceived ?? e.bill_received, b.billNo ?? e.bill_no,
-    b.remark ?? e.remark, (b.asDraft ? 'Draft' : 'Submitted'), (willSubmit ? now() : e.submitted_at), now(), e.id);
-  await addHistory(e.id, req.user.id, 'Edited', 'Updated voucher');
+    b.remark ?? e.remark,
+    (e.status === 'Query' ? 'Query' : (b.asDraft ? 'Draft' : 'Submitted')),
+    ((willSubmit && e.status !== 'Query') ? now() : e.submitted_at), now(), e.id);
+  await addHistory(e.id, req.user.id, 'Edited',
+    e.status === 'Query' ? 'Edited during query — full re-approval will be required when the query is resolved' : 'Updated voucher');
   await logAudit(req.user, 'Edited expense', 'expense', e.voucher_no, '');
   res.json({ ok: true });
 });
@@ -612,7 +619,19 @@ router.post('/queries/:id/resolve', async (req, res) => {
   await db.prepare('INSERT INTO query_messages (id,query_id,by_user,text,at) VALUES (?,?,?,?,?)')
     .run(uid(), q.id, req.user.id, overdue ? ('Marked resolved. Delay reason: ' + reason) : 'Marked resolved.', now());
   const stillOpen = await db.prepare("SELECT 1 FROM queries WHERE expense_id=? AND status='Open' LIMIT 1").get(q.expense_id);
-  if (!stillOpen && e && e.status === 'Query') {
+  // Did anyone change the voucher's data since this query was raised? (replies and attachments don't count)
+  const dataEdited = !!(await db.prepare("SELECT 1 FROM expense_history WHERE expense_id=? AND action='Edited' AND at>=? LIMIT 1").get(q.expense_id, q.created_at));
+  const RESUMABLE = { 'Submitted': 'Checker', 'Checked': 'Purchase', 'Purchase Reviewed': 'Operations', 'Operations Reviewed': 'Accounts', 'Accounts Reviewed': 'Accounts (final approval)' };
+  const resumeAt = e && e.prev_status;
+  if (!stillOpen && e && e.status === 'Query' && !dataEdited && RESUMABLE[resumeAt]) {
+    // Only replies/attachments happened: do NOT reset the chain. The voucher returns to the
+    // stage where the query was raised, earlier approvals are kept, and only that stage must approve again.
+    const ap = JSON.parse(e.approvals || '{}');
+    ap.resumed = { by: req.user.id, at: now() }; // restarts the SLA clock for the resumed stage
+    await db.prepare("UPDATE expenses SET status=?,approvals=?,prev_status=NULL,updated_at=? WHERE id=? AND status='Query'")
+      .run(resumeAt, JSON.stringify(ap), now(), e.id);
+    await addHistory(e.id, req.user.id, 'Query resolved', 'Returned to "' + resumeAt + '" — awaiting ' + RESUMABLE[resumeAt] + ' approval (earlier approvals kept)');
+  } else if (!stillOpen && e && e.status === 'Query') {
     // P12/23 -- full ladder reset: once all queries are resolved, the voucher returns to
     // the start and the whole chain re-approves (checker -> purchase -> operations ->
     // accounts), regardless of who raised the query or at which stage. History is retained.
