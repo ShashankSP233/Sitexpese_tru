@@ -1,8 +1,8 @@
-'use strict';
-const { Pool, types } = require('pg');
-const bcrypt = require('bcryptjs');
-const crypto = require('crypto');
-const { AsyncLocalStorage } = require('node:async_hooks');
+"use strict";
+const { Pool, types } = require("pg");
+const bcrypt = require("bcryptjs");
+const crypto = require("crypto");
+const { AsyncLocalStorage } = require("node:async_hooks");
 
 // pg returns BIGINT (and NUMERIC) columns as strings by default, because a
 // 64-bit value can exceed what a JS number can represent exactly. Every
@@ -17,16 +17,22 @@ types.setTypeParser(20, (v) => (v === null ? null : parseInt(v, 10))); // BIGINT
 const pool = new Pool({
   // Hardcoded the local connection string here:
   connectionString: "postgres://postgres:root@localhost:5432/sitexpense",
-  
+
   // Managed Postgres hosts (Supabase, Render, Railway, Neon, ...) require
   // SSL and use certs not in Node's default trust store; local/Docker
   // Postgres usually has none. Auto-detect by host, override with PGSSL.
-  ssl: process.env.PGSSL === '0' ? false
-     : process.env.PGSSL === '1' ? { rejectUnauthorized: false }
-     : /localhost|127\.0\.0\.1/.test(process.env.DATABASE_URL || "localhost") ? false
-     : { rejectUnauthorized: false },
+  ssl:
+    process.env.PGSSL === "0"
+      ? false
+      : process.env.PGSSL === "1"
+        ? { rejectUnauthorized: false }
+        : /localhost|127\.0\.0\.1/.test(process.env.DATABASE_URL || "localhost")
+          ? false
+          : { rejectUnauthorized: false },
 });
-pool.on('error', (err) => console.error('[db] idle client error:', err.message));
+pool.on("error", (err) =>
+  console.error("[db] idle client error:", err.message),
+);
 
 const uid = () => crypto.randomUUID();
 const now = () => Date.now();
@@ -55,7 +61,7 @@ const txContext = new AsyncLocalStorage();
 
 function toPgSql(sql) {
   let i = 0;
-  return sql.replace(/\?/g, () => '$' + (++i));
+  return sql.replace(/\?/g, () => "$" + ++i);
 }
 
 async function raw(sql, params) {
@@ -97,12 +103,14 @@ async function transaction(fn) {
   if (existing) return fn();
   const client = await pool.connect();
   try {
-    await client.query('BEGIN');
+    await client.query("BEGIN");
     const result = await txContext.run(client, fn);
-    await client.query('COMMIT');
+    await client.query("COMMIT");
     return result;
   } catch (e) {
-    try { await client.query('ROLLBACK'); } catch (_) {}
+    try {
+      await client.query("ROLLBACK");
+    } catch (_) {}
     throw e;
   } finally {
     client.release();
@@ -306,97 +314,186 @@ CREATE INDEX IF NOT EXISTS idx_budgets_proj ON project_budgets(project_id);
 
 // ---------------------------------------------------------------- seed
 async function seed() {
-  const seeded = await db.prepare('SELECT 1 FROM users LIMIT 1').get();
+  const seeded = await db.prepare("SELECT 1 FROM users LIMIT 1").get();
   if (seeded) return;
 
-  const insProj = db.prepare('INSERT INTO projects (id,code,name,active) VALUES (?,?,?,1)');
+  const insProj = db.prepare(
+    "INSERT INTO projects (id,code,name,active) VALUES (?,?,?,1)",
+  );
   const projects = [
-    ['p_dm', 'DM', 'Digha Majhaua'],
-    ['p_mg', 'MG', 'Majhaua Gazipur'],
-    ['p_kg', 'KG', 'Kalughat'],
-    ['p_as', 'ASM', 'Assam'],
+    ["p_dm", "DM", "Digha Majhaua"],
+    ["p_mg", "MG", "Majhaua Gazipur"],
+    ["p_kg", "KG", "Kalughat"],
+    ["p_as", "ASM", "Assam"],
   ];
   for (const p of projects) await insProj.run(p[0], p[1], p[2]);
 
-  const insCat = db.prepare('INSERT INTO categories (id,name,active) VALUES (?,?,1)');
-  for (const n of ['Food', 'Fuel', 'Spare without GST', 'LPG', 'Maintenance', 'Transportation', 'Water', 'Spare', 'Miscellaneous'])
+  const insCat = db.prepare(
+    "INSERT INTO categories (id,name,active) VALUES (?,?,1)",
+  );
+  for (const n of [
+    "Food",
+    "Fuel",
+    "Spare without GST",
+    "LPG",
+    "Maintenance",
+    "Transportation",
+    "Water",
+    "Spare",
+    "Miscellaneous",
+  ])
     await insCat.run(uid(), n);
 
-  const insLoc = db.prepare('INSERT INTO locations (id,name,active) VALUES (?,?,1)');
-  for (const n of ['Patna - RO', 'Arra - RO', 'Dharti - 3', 'APS-16', 'APS-15', 'Sharda', 'Kalughat', 'Guest House'])
+  const insLoc = db.prepare(
+    "INSERT INTO locations (id,name,active) VALUES (?,?,1)",
+  );
+  for (const n of [
+    "Patna - RO",
+    "Arra - RO",
+    "Dharti - 3",
+    "APS-16",
+    "APS-15",
+    "Sharda",
+    "Kalughat",
+    "Guest House",
+  ])
     await insLoc.run(uid(), n);
 
   const insUser = db.prepare(
-    'INSERT INTO users (id,username,name,password_hash,role,all_projects,active,created_at) VALUES (?,?,?,?,?,?,1,?)'
+    "INSERT INTO users (id,username,name,password_hash,role,all_projects,active,created_at) VALUES (?,?,?,?,?,?,1,?)",
   );
-  const insUP = db.prepare('INSERT INTO user_projects (user_id,project_id) VALUES (?,?)');
+  const insUP = db.prepare(
+    "INSERT INTO user_projects (user_id,project_id) VALUES (?,?)",
+  );
   const mk = async (id, un, nm, pw, role, all, projIds) => {
-    await insUser.run(id, un, nm, bcrypt.hashSync(pw, 10), role, all ? 1 : 0, now());
-    if (!all) for (const pid of (projIds || [])) await insUP.run(id, pid);
+    await insUser.run(
+      id,
+      un,
+      nm,
+      bcrypt.hashSync(pw, 10),
+      role,
+      all ? 1 : 0,
+      now(),
+    );
+    if (!all) for (const pid of projIds || []) await insUP.run(id, pid);
   };
-  await mk('u_admin', 'admin', 'System Admin', 'admin123', 'admin', true);
-  await mk('u_site', 'site', 'Suresh Chand (Site)', 'site123', 'site', false, ['p_dm', 'p_mg']);
-  await mk('u_check', 'checker', 'Vipul (Checker)', 'check123', 'checker', true);
-  await mk('u_pur', 'purchase', 'Amrit (Purchase)', 'pur123', 'purchase', true);
-  await mk('u_ops', 'operations', 'Test Operations', 'ops123', 'operations', true);
-  await mk('u_acc', 'accounts', 'Gaurav (Accounts)', 'acc123', 'accounts', true);
+  await mk("u_admin", "admin", "System Admin", "admin123", "admin", true);
+  await mk("u_site", "site", "Suresh Chand (Site)", "site123", "site", false, [
+    "p_dm",
+    "p_mg",
+  ]);
+  await mk(
+    "u_check",
+    "checker",
+    "Vipul (Checker)",
+    "check123",
+    "checker",
+    true,
+  );
+  await mk("u_pur", "purchase", "Amrit (Purchase)", "pur123", "purchase", true);
+  await mk(
+    "u_ops",
+    "operations",
+    "Test Operations",
+    "ops123",
+    "operations",
+    true,
+  );
+  await mk(
+    "u_acc",
+    "accounts",
+    "Gaurav (Accounts)",
+    "acc123",
+    "accounts",
+    true,
+  );
 
-  await db.prepare("INSERT INTO counters (name,seq) VALUES ('voucher',1000)").run();
-  console.log('[db] seeded demo data (admin/admin123, site/site123, checker/check123, purchase/pur123, operations/ops123, accounts/acc123)');
+  await db
+    .prepare("INSERT INTO counters (name,seq) VALUES ('voucher',1000)")
+    .run();
+  console.log(
+    "[db] seeded demo data (admin/admin123, site/site123, checker/check123, purchase/pur123, operations/ops123, accounts/acc123)",
+  );
 }
 
 // ---------------------------------------------------------------- helpers
 async function loadUser(id) {
-  const u = await db.prepare('SELECT * FROM users WHERE id=?').get(id);
+  const u = await db.prepare("SELECT * FROM users WHERE id=?").get(id);
   if (!u) return null;
   u.all_projects = !!u.all_projects;
   u.active = !!u.active;
-  u.project_ids = (await db.prepare('SELECT project_id FROM user_projects WHERE user_id=?').all(id)).map((r) => r.project_id);
+  u.project_ids = (
+    await db
+      .prepare("SELECT project_id FROM user_projects WHERE user_id=?")
+      .all(id)
+  ).map((r) => r.project_id);
   return u;
 }
 
 function scopeOf(user) {
-  if (user.all_projects || user.role === 'admin') return { all: true, ids: [] };
+  if (user.all_projects || user.role === "admin") return { all: true, ids: [] };
   return { all: false, ids: user.project_ids };
 }
 
 async function nextVoucher() {
-  return 'VCH-' + (await db.transaction(async () => {
-    const c = await db.prepare("SELECT seq FROM counters WHERE name='voucher'").get();
-    const next = (c ? c.seq : 1000) + 1;
-    await db.prepare("UPDATE counters SET seq=? WHERE name='voucher'").run(next);
-    return next;
-  }));
+  return (
+    "VCH-" +
+    (await db.transaction(async () => {
+      const c = await db
+        .prepare("SELECT seq FROM counters WHERE name='voucher'")
+        .get();
+      const next = (c ? c.seq : 1000) + 1;
+      await db
+        .prepare("UPDATE counters SET seq=? WHERE name='voucher'")
+        .run(next);
+      return next;
+    }))
+  );
 }
 
 async function nextFundRequest() {
-  const c = await db.prepare(
-    "SELECT seq FROM counters WHERE name='fund_request'"
-  ).get();
+  const c = await db
+    .prepare("SELECT seq FROM counters WHERE name='fund_request'")
+    .get();
 
   const next = (c ? c.seq : 0) + 1;
 
   if (c) {
-    await db.prepare(
-      "UPDATE counters SET seq=? WHERE name='fund_request'"
-    ).run(next);
+    await db
+      .prepare("UPDATE counters SET seq=? WHERE name='fund_request'")
+      .run(next);
   } else {
-    await db.prepare(
-      "INSERT INTO counters (name, seq) VALUES ('fund_request', ?)"
-    ).run(next);
+    await db
+      .prepare("INSERT INTO counters (name, seq) VALUES ('fund_request', ?)")
+      .run(next);
   }
 
-  return 'FR-' + String(next).padStart(4, '0');
+  return "FR-" + String(next).padStart(4, "0");
 }
 
 async function logAudit(user, action, entity, entityId, detail) {
-  await db.prepare('INSERT INTO audit (id,at,user_id,user_name,role,action,entity,entity_id,detail) VALUES (?,?,?,?,?,?,?,?,?)')
-    .run(uid(), now(), user ? user.id : null, user ? user.name : null, user ? user.role : null,
-         action, entity || null, entityId || null, detail || null);
+  await db
+    .prepare(
+      "INSERT INTO audit (id,at,user_id,user_name,role,action,entity,entity_id,detail) VALUES (?,?,?,?,?,?,?,?,?)",
+    )
+    .run(
+      uid(),
+      now(),
+      user ? user.id : null,
+      user ? user.name : null,
+      user ? user.role : null,
+      action,
+      entity || null,
+      entityId || null,
+      detail || null,
+    );
 }
 
 async function addHistory(expenseId, byUser, action, detail) {
-  await db.prepare('INSERT INTO expense_history (id,expense_id,by_user,action,detail,at) VALUES (?,?,?,?,?,?)')
+  await db
+    .prepare(
+      "INSERT INTO expense_history (id,expense_id,by_user,action,detail,at) VALUES (?,?,?,?,?,?)",
+    )
     .run(uid(), expenseId, byUser, action, detail || null, now());
 }
 
@@ -405,4 +502,18 @@ async function ready() {
   await seed();
 }
 
-module.exports = { db, uid, now, loadUser, scopeOf, nextVoucher, nextFundRequest, logAudit, addHistory, toPaise, toRupees, ready, pool };
+module.exports = {
+  db,
+  uid,
+  now,
+  loadUser,
+  scopeOf,
+  nextVoucher,
+  nextFundRequest,
+  logAudit,
+  addHistory,
+  toPaise,
+  toRupees,
+  ready,
+  pool,
+};

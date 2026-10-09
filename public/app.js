@@ -92,7 +92,6 @@ function amountInWordsIndian(amount) {
   return indian(n) + " Rupees Only";
 }
 
-
 const fmtDate = (d) =>
   d
     ? new Date(d).toLocaleDateString("en-GB", {
@@ -237,9 +236,14 @@ async function boot() {
 const can = {
   create: () => ["site", "checker", "admin"].includes(S.user.role),
   review: () =>
-    ["checker", "purchase", "operations", "accounts", "account_checker", "admin"].includes(
-      S.user.role,
-    ),
+    [
+      "checker",
+      "purchase",
+      "operations",
+      "accounts",
+      "account_checker",
+      "admin",
+    ].includes(S.user.role),
   admin: () => S.user.role === "admin",
   accountCheckers: () => ["accounts", "admin"].includes(S.user.role),
   audit: () => S.user.role === "admin",
@@ -255,8 +259,7 @@ const can = {
 
   analytics: () => ["accounts", "admin"].includes(S.user.role),
   funds: () => ["site", "checker", "accounts", "admin"].includes(S.user.role),
-  reports: () =>
-    ["accounts", "admin"].includes(S.user.role),
+  reports: () => ["accounts", "admin"].includes(S.user.role),
   reviewTab: () => can.review() && S.user.role !== "checker",
   reviewOnly: () => ["purchase", "operations"].includes(S.user.role),
 };
@@ -322,11 +325,11 @@ async function buildNav() {
     });
 
   if (can.allFundRequests())
-  items.push({
-    id: "allFundRequests",
-    ic: "₹",
-    label: "All Fund Requests",
-  });
+    items.push({
+      id: "allFundRequests",
+      ic: "₹",
+      label: "All Fund Requests",
+    });
 
   if (can.funds())
     items.push({ id: "funds", ic: "₹", label: "Funds & Balance" });
@@ -385,7 +388,7 @@ async function buildNav() {
       ic: "₹",
       label: "Release",
     });
-    
+
   if (can.funds()) bn.push({ id: "funds", ic: "₹", label: "Balance" });
   if (can.payments()) bn.push({ id: "payments", ic: "✔", label: "Pay" });
   if (can.downloadVouchers())
@@ -413,20 +416,17 @@ const TITLES = {
     "Requests awaiting paperwork and Accounts processing",
   ],
 
-  fundsRelease: [
-    "Funds Release",
-    "Release funds for printed fund requests",
-  ],
-  allFundRequests: [
-    "All Fund Requests",
-    "Complete history of fund requests",
-  ],
+  fundsRelease: ["Funds Release", "Release funds for printed fund requests"],
+  allFundRequests: ["All Fund Requests", "Complete history of fund requests"],
   users: ["Users & Access", "Accounts, roles & project access"],
   accountCheckers: ["Account Checkers", "Manage Account Checker access"],
   masters: ["Masters", "Categories, projects & locations"],
   audit: ["Audit Trail", "Complete activity log"],
   payments: ["Approved Payments", "Select approved vouchers to pay"],
-  downloadVouchers: ["Download Vouchers", "Select vouchers that completed Accounts review"],
+  downloadVouchers: [
+    "Download Vouchers",
+    "Select vouchers that completed Accounts review",
+  ],
   paymentReceived: [
     "Payment Received",
     "Confirm payments received after Accounts approval",
@@ -441,7 +441,7 @@ async function go(pg) {
     !(S.user.role === "purchase" && pg === "fundRequestsPurchase")
   ) {
     pg = "review";
-  } 
+  }
 
   S.page = pg;
   $$("#nav a").forEach((a) =>
@@ -490,12 +490,13 @@ function slaBadge(e) {
 
 function previousDelayBadge(e) {
   const delays = e.previousDelays || [];
-  if (!delays.length) return '';
+  if (!delays.length) return "";
 
-  const names = delays.map(d => d.stage).join(', ');
-  const label = delays.length === 1
-    ? `Previously delayed — ${delays[0].stage}`
-    : `Previously delayed — ${delays.length} review stages`;
+  const names = delays.map((d) => d.stage).join(", ");
+  const label =
+    delays.length === 1
+      ? `Previously delayed — ${delays[0].stage}`
+      : `Previously delayed — ${delays.length} review stages`;
 
   return `<span class="tag"
     style="background:#fff3e0;color:#b9770e"
@@ -505,12 +506,12 @@ function previousDelayBadge(e) {
 }
 
 function overallSlaBadge(e) {
-  if (!e.overallSla || !e.overallSla.dueAt) return '';
+  if (!e.overallSla || !e.overallSla.dueAt) return "";
 
   if (e.overallSla.overdue) {
     const over = Math.max(
       1,
-      Math.floor((Date.now() - e.overallSla.dueAt) / 86400000)
+      Math.floor((Date.now() - e.overallSla.dueAt) / 86400000),
     );
 
     return `<span class="tag"
@@ -520,7 +521,7 @@ function overallSlaBadge(e) {
     </span>`;
   }
 
-  return '';
+  return "";
 }
 
 function expenseTable(rows, opts) {
@@ -536,14 +537,19 @@ Views.dashboard = async function () {
   const [ex, fundsData, fundRequests] = await Promise.all([
     api("GET", "/expenses"),
     can.funds() ? api("GET", "/funds") : Promise.resolve({ totals: {} }),
-    S.user.role === "accounts" ? api("GET", "/fund-requests") : Promise.resolve([]),
+    S.user.role === "accounts"
+      ? api("GET", "/fund-requests")
+      : Promise.resolve([]),
   ]);
   const total = ex.reduce((s, e) => s + (+e.amount || 0), 0);
   const totalApproved = fundRequests
     .filter(
       (r) =>
         ["Printed", "Completed"].includes(r.status) &&
-        !String(r.request_no || "").trim().toUpperCase().startsWith("APR"),
+        !String(r.request_no || "")
+          .trim()
+          .toUpperCase()
+          .startsWith("APR"),
     )
     .reduce((s, r) => s + (+r.total || 0), 0);
   const totalPaid = fundRequests
@@ -575,8 +581,8 @@ Views.dashboard = async function () {
     role === "accounts"
       ? `${money(totalPaid)} paid − ${money(totalApproved)} approved`
       : role === "checker"
-      ? `${money(t.distributed || 0)} to sites`
-      : `${money(spent)} spent`;
+        ? `${money(t.distributed || 0)} to sites`
+        : `${money(spent)} spent`;
   $("#content").innerHTML = `
     <div class="grid stat-row" style="margin-bottom:20px">
       <div class="stat accent"><div class="lab">Total Expenses</div><div class="val">${money(total)}</div><div class="sub2">${ex.length} vouchers</div></div>
@@ -838,7 +844,9 @@ Views.payments = async function () {
 Views.downloadVouchers = async function () {
   const ex = await api("GET", "/expenses");
   Views._downloadVouchers = ex.filter((e) =>
-    ["Accounts Reviewed", "Approved", "Payment Approved", "Paid"].includes(e.status),
+    ["Accounts Reviewed", "Approved", "Payment Approved", "Paid"].includes(
+      e.status,
+    ),
   );
 
   const projects = [
@@ -903,9 +911,10 @@ Views._filterDownloadVouchers = function () {
 
   const total = rows.reduce((sum, e) => sum + (+e.amount || 0), 0);
   $("#dv-count").textContent = `${rows.length} voucher(s) · ${money(total)}`;
-  $("#dv-body").innerHTML = rows
-    .map(
-      (e) => `<tr>
+  $("#dv-body").innerHTML =
+    rows
+      .map(
+        (e) => `<tr>
         <td><input type="checkbox" class="dv-cb" value="${esc(e.id)}"></td>
         <td class="mono">${esc(e.voucher_no)}</td>
         <td>${fmtDate(e.date)}</td>
@@ -915,8 +924,9 @@ Views._filterDownloadVouchers = function () {
         <td>${pill(e.status)}</td>
         <td><button class="btn btn-ghost btn-sm" onclick="Detail.open('${e.id}')">View</button></td>
       </tr>`,
-    )
-    .join("") || '<tr><td colspan="8"><div class="empty">No completed vouchers match these filters.</div></td></tr>';
+      )
+      .join("") ||
+    '<tr><td colspan="8"><div class="empty">No completed vouchers match these filters.</div></td></tr>';
 };
 
 Views._toggleAllDownloadVouchers = function (master) {
@@ -979,10 +989,7 @@ Views.fundRequests = async function () {
         <select id="fr-location" onchange="Views._filterFundRequests()">
           <option value="">All Sites / Locations</option>
           ${locations
-            .map(
-              (l) =>
-                `<option value="${esc(l.id)}">${esc(l.name)}</option>`,
-            )
+            .map((l) => `<option value="${esc(l.id)}">${esc(l.name)}</option>`)
             .join("")}
         </select>
 
@@ -1188,11 +1195,7 @@ Views.allFundRequests = async function () {
             </td>
 
             <td>
-              ${esc(
-                r.created_by_name ||
-                r.createdByName ||
-                "—"
-              )}
+              ${esc(r.created_by_name || r.createdByName || "—")}
             </td>
 
             <td class="num">
@@ -1275,13 +1278,10 @@ Views.allFundRequests = async function () {
   `;
 };
 
-
 Views.fundsRelease = async function () {
   const requests = await api("GET", "/fund-requests");
 
-  const printed = requests.filter(
-    (r) => r.status === "Printed"
-  );
+  const printed = requests.filter((r) => r.status === "Printed");
 
   const rows =
     printed
@@ -1297,11 +1297,7 @@ Views.fundsRelease = async function () {
             </td>
 
             <td>
-              ${esc(
-                r.created_by_name ||
-                r.createdByName ||
-                "—"
-              )}
+              ${esc(r.created_by_name || r.createdByName || "—")}
             </td>
 
             <td class="num">
@@ -1332,7 +1328,7 @@ Views.fundsRelease = async function () {
               </button>
             </td>
           </tr>
-        `
+        `,
       )
       .join("") ||
     `
@@ -1392,13 +1388,9 @@ Views.fundsRelease = async function () {
 
 Views._openFundRequestRelease = async function (id) {
   try {
-    const dl = (k, v) =>
-      `<div class="dl">${k}</div><div class="dv">${v}</div>`;
+    const dl = (k, v) => `<div class="dl">${k}</div><div class="dv">${v}</div>`;
 
-    const r = await api(
-      "GET",
-      `/fund-requests/${encodeURIComponent(id)}`
-    );
+    const r = await api("GET", `/fund-requests/${encodeURIComponent(id)}`);
 
     const items = r.items || [];
 
@@ -1414,7 +1406,7 @@ Views._openFundRequestRelease = async function (id) {
               <td>${esc(e.locationName || "—")}</td>
               <td class="num">${money(e.amount)}</td>
             </tr>
-          `
+          `,
         )
         .join("") ||
       `
@@ -1437,39 +1429,17 @@ Views._openFundRequestRelease = async function (id) {
       <div class="modal-body">
 
         <div class="detail-grid">
-          ${dl(
-            "Request",
-            esc(r.request_no || r.requestNo || "—")
-          )}
+          ${dl("Request", esc(r.request_no || r.requestNo || "—"))}
 
-          ${dl(
-            "Created",
-            fmtDT(Number(r.created_at))
-          )}
+          ${dl("Created", fmtDT(Number(r.created_at)))}
 
-          ${dl(
-            "Created By",
-            esc(
-              r.created_by_name ||
-              r.createdByName ||
-              "—"
-            )
-          )}
+          ${dl("Created By", esc(r.created_by_name || r.createdByName || "—"))}
 
-          ${dl(
-            "Vouchers",
-            String(items.length)
-          )}
+          ${dl("Vouchers", String(items.length))}
 
-          ${dl(
-            "Total",
-            `<b class="mono">${money(r.total)}</b>`
-          )}
+          ${dl("Total", `<b class="mono">${money(r.total)}</b>`)}
 
-          ${dl(
-            "Status",
-            pill(r.status)
-          )}
+          ${dl("Status", pill(r.status))}
         </div>
 
         <div class="section-t">
@@ -1522,7 +1492,6 @@ Views._openFundRequestRelease = async function (id) {
 
       </div>
     `);
-
   } catch (e) {
     toast(e.message, "err");
   }
@@ -1530,10 +1499,7 @@ Views._openFundRequestRelease = async function (id) {
 
 Views._releaseFundRequest = async function (id) {
   try {
-    const r = await api(
-      "GET",
-      `/fund-requests/${encodeURIComponent(id)}`
-    );
+    const r = await api("GET", `/fund-requests/${encodeURIComponent(id)}`);
 
     const requestNo = r.request_no || r.requestNo;
     const total = Number(r.total || r.total_amount || 0);
@@ -1542,9 +1508,9 @@ Views._releaseFundRequest = async function (id) {
     if (
       !confirm(
         `Release payment for ${requestNo}?\n\n` +
-        `${count} voucher(s)\n` +
-        `${money(total)}\n\n` +
-        `This will mark the vouchers Paid and deposit the released amount into the project fund pool.`
+          `${count} voucher(s)\n` +
+          `${money(total)}\n\n` +
+          `This will mark the vouchers Paid and deposit the released amount into the project fund pool.`,
       )
     ) {
       return;
@@ -1552,18 +1518,17 @@ Views._releaseFundRequest = async function (id) {
 
     const result = await api(
       "POST",
-      `/fund-requests/${encodeURIComponent(id)}/release`
+      `/fund-requests/${encodeURIComponent(id)}/release`,
     );
 
     Modal.close();
 
     toast(
       `${result.requestNo} released · ${money(result.total)} · ${result.count} voucher(s)`,
-      "ok"
+      "ok",
     );
 
     go("fundsRelease");
-
   } catch (e) {
     toast(e.message, "err");
   }
@@ -1592,13 +1557,9 @@ Views._filterFundRequests = function () {
     rows = rows.filter((e) => String(e.location_id) === String(location));
   }
 
-  const total = rows.reduce(
-    (sum, e) => sum + (+e.amount || 0),
-    0,
-  );
+  const total = rows.reduce((sum, e) => sum + (+e.amount || 0), 0);
 
-  $("#fr-count").textContent =
-    `${rows.length} voucher(s) · ${money(total)}`;
+  $("#fr-count").textContent = `${rows.length} voucher(s) · ${money(total)}`;
 
   $("#fr-body").innerHTML =
     rows
@@ -1680,10 +1641,7 @@ Views._createFundRequest = async function () {
     ids.includes(e.id),
   );
 
-  const total = selected.reduce(
-    (sum, e) => sum + (+e.amount || 0),
-    0,
-  );
+  const total = selected.reduce((sum, e) => sum + (+e.amount || 0), 0);
 
   if (
     !confirm(
@@ -1715,13 +1673,9 @@ Views._toggleAllFundRequestsPurchase = function (master) {
 
 Views._openFundRequest = async function (id) {
   try {
-    const dl = (k, v) =>
-      `<div class="dl">${k}</div><div class="dv">${v}</div>`;
+    const dl = (k, v) => `<div class="dl">${k}</div><div class="dv">${v}</div>`;
 
-    const r = await api(
-      "GET",
-      `/fund-requests/${encodeURIComponent(id)}`,
-    );
+    const r = await api("GET", `/fund-requests/${encodeURIComponent(id)}`);
 
     const items = r.items || [];
 
@@ -1757,7 +1711,7 @@ Views._openFundRequest = async function (id) {
 
       <div class="modal-body">
         <div class="detail-grid">
-          ${dl("Request", esc(r.request_no ||  r.requestNo || "—"))}
+          ${dl("Request", esc(r.request_no || r.requestNo || "—"))}
           ${dl("Created", fmtDT(Number(r.created_at)))}
           ${dl("Created By", esc(r.created_by_name || "—"))}
           ${dl("Vouchers", String(items.length))}
@@ -1823,10 +1777,7 @@ Views._openFundRequest = async function (id) {
 
 Views._printFundRequest = async function (id) {
   try {
-    const r = await api(
-      "GET",
-      `/fund-requests/${encodeURIComponent(id)}`,
-    );
+    const r = await api("GET", `/fund-requests/${encodeURIComponent(id)}`);
 
     const requestNo = r.request_no || "—";
     const createdBy = r.created_by_name || "—";
@@ -1840,7 +1791,6 @@ Views._printFundRequest = async function (id) {
         year: "2-digit",
       })}/` +
       `${requestNo}`;
-    
 
     if (!items.length) {
       toast("Fund request contains no vouchers", "err");
@@ -1885,7 +1835,6 @@ Views._printFundRequest = async function (id) {
      */
     const adminName = createdBy || "—";
 
-
     /* =========================================================
        GROUP VOUCHERS BY PROJECT
     ========================================================= */
@@ -1910,15 +1859,11 @@ Views._printFundRequest = async function (id) {
       project.items.push(e);
     });
 
-    const projects = Array.from(projectMap.values()).sort(
-      (a, b) => a.code.localeCompare(b.code),
+    const projects = Array.from(projectMap.values()).sort((a, b) =>
+      a.code.localeCompare(b.code),
     );
 
-    const total = items.reduce(
-      (sum, e) => sum + Number(e.amount || 0),
-      0,
-    );
-
+    const total = items.reduce((sum, e) => sum + Number(e.amount || 0), 0);
 
     const projectNames = projects
       .map((p) => p.name)
@@ -1967,7 +1912,6 @@ Views._printFundRequest = async function (id) {
       )
       .join("");
 
-
     /* =========================================================
        WORKFLOW HISTORY
     ========================================================= */
@@ -1977,7 +1921,6 @@ Views._printFundRequest = async function (id) {
      * The detailed voucher history remains available in the API
      * response but is not printed separately here.
      */
-
 
     /* =========================================================
        ANNEXURES — ONE SECTION PER PROJECT
@@ -2099,16 +2042,11 @@ Views._printFundRequest = async function (id) {
       })
       .join("");
 
-
     /* =========================================================
        PRINT WINDOW
     ========================================================= */
 
-    const w = window.open(
-      "SiteXpense",
-      "_blank",
-      "width=1100,height=800",
-    );
+    const w = window.open("SiteXpense", "_blank", "width=1100,height=800");
 
     if (!w) {
       toast("Please allow pop-ups to print", "err");
@@ -3073,19 +3011,17 @@ Views._printFundRequest = async function (id) {
     w.document.close();
 
     Modal.close();
-
   } catch (e) {
     toast(e.message, "err");
   }
 };
-
 
 Views._markFundRequestPrinted = async function (id) {
   try {
     if (
       !confirm(
         "Mark this fund request as Printed?\n\n" +
-        "Confirm that the paperwork has been physically printed."
+          "Confirm that the paperwork has been physically printed.",
       )
     ) {
       return;
@@ -3098,17 +3034,13 @@ Views._markFundRequestPrinted = async function (id) {
 
     Modal.close();
 
-    toast(
-      `Fund request marked as ${result.status || "Printed"}`,
-      "ok"
-    );
+    toast(`Fund request marked as ${result.status || "Printed"}`, "ok");
 
     go("fundRequestsPurchase");
   } catch (e) {
     toast(e.message, "err");
   }
 };
-
 
 Views._printSelectedFundRequests = async function () {
   const ids = $$(".frp-cb")
@@ -3141,14 +3073,9 @@ Views._printSelectedFundRequests = async function () {
 Views.paymentReceived = async function () {
   const ex = await api("GET", "/expenses");
 
-  const list = ex.filter(
-    (e) => e.status === "Payment Approved"
-  );
+  const list = ex.filter((e) => e.status === "Payment Approved");
 
-  const total = list.reduce(
-    (s, e) => s + (+e.amount || 0),
-    0
-  );
+  const total = list.reduce((s, e) => s + (+e.amount || 0), 0);
 
   const rows =
     list
@@ -3304,23 +3231,16 @@ Views._confirmPaymentReceived = async function () {
 
   if (
     !confirm(
-      `Confirm that payment has been received for ${ids.length} voucher(s)?`
+      `Confirm that payment has been received for ${ids.length} voucher(s)?`,
     )
   ) {
     return;
   }
 
   try {
-    const r = await api(
-      "POST",
-      "/payments/received",
-      { ids }
-    );
+    const r = await api("POST", "/payments/received", { ids });
 
-    toast(
-      `${r.received} payment(s) marked as Paid`,
-      "ok"
-    );
+    toast(`${r.received} payment(s) marked as Paid`, "ok");
 
     go("paymentReceived");
   } catch (e) {
@@ -3340,23 +3260,15 @@ Views._printPaymentReceived = async function () {
   const ex = await api("GET", "/expenses");
 
   const selected = ex.filter(
-    (e) =>
-      ids.includes(e.id) &&
-      e.status === "Payment Approved"
+    (e) => ids.includes(e.id) && e.status === "Payment Approved",
   );
 
   if (!selected.length) {
-    toast(
-      "No selected Payment Approved vouchers found",
-      "err"
-    );
+    toast("No selected Payment Approved vouchers found", "err");
     return;
   }
 
-  const total = selected.reduce(
-    (s, e) => s + (+e.amount || 0),
-    0
-  );
+  const total = selected.reduce((s, e) => s + (+e.amount || 0), 0);
 
   const rows = selected
     .map(
@@ -3371,21 +3283,14 @@ Views._printPaymentReceived = async function () {
           </td>
           <td>Payment Approved</td>
         </tr>
-      `
+      `,
     )
     .join("");
 
-  const w = window.open(
-    "",
-    "_blank",
-    "width=1100,height=800"
-  );
+  const w = window.open("", "_blank", "width=1100,height=800");
 
   if (!w) {
-    toast(
-      "Please allow pop-ups to print",
-      "err"
-    );
+    toast("Please allow pop-ups to print", "err");
     return;
   }
 
@@ -3618,7 +3523,7 @@ Views._confirmPay = async function () {
     const r = await api("POST", "/payments", { ids });
     toast(
       `${r.paid} payment(s) confirmed · ${money(r.released)} released`,
-      "ok"
+      "ok",
     );
     go("payments");
   } catch (e) {
@@ -3680,7 +3585,7 @@ Views.review = async function () {
       admin: "All items in the review pipeline.",
     }[S.user.role] || "";
   $("#content").innerHTML =
-      `<div class="card card-pad" style="margin-bottom:16px;display:flex;align-items:center"><div class="csub" style="margin:0">${esc(hint)}</div><span class="tag" style="margin-left:auto">${rows.length} pending</span></div><div class="card">${expenseTable(rows, { reviewActions: S.user.role === "accounts" })}</div>`;
+    `<div class="card card-pad" style="margin-bottom:16px;display:flex;align-items:center"><div class="csub" style="margin:0">${esc(hint)}</div><span class="tag" style="margin-left:auto">${rows.length} pending</span></div><div class="card">${expenseTable(rows, { reviewActions: S.user.role === "accounts" })}</div>`;
 };
 
 Views.funds = async function () {
@@ -3747,7 +3652,7 @@ Views.funds = async function () {
       )
       .join("") ||
     '<tr><td colspan="5"><div class="empty">No funds recorded yet</div></td></tr>';
-  FundsAdmin._adminFundBalance = d.adminFund ? d.adminFund.balance : 0;  
+  FundsAdmin._adminFundBalance = d.adminFund ? d.adminFund.balance : 0;
   $("#content").innerHTML = `
         <div class="grid stat-row" style="margin-bottom:18px;grid-template-columns:repeat(4,1fr)">
       <div class="stat green">
@@ -3825,8 +3730,14 @@ Views.users = async function () {
 Views.accountCheckers = async function () {
   const users = await api("GET", "/account-checkers");
   Views._accountCheckers = users;
-  const rows = users.map((u) => `<tr><td><b>${esc(u.name)}</b></td><td class="mono">${esc(u.username)}</td><td>${u.all_projects ? '<span class="tag">All</span>' : u.project_ids.length ? u.project_ids.map((id) => `<span class="tag">${esc((S.allProjects.find((p) => p.id === id) || {}).code || "?")}</span>`).join(" ") : '<span class="tag">none</span>'}</td><td>${u.active ? '<span class="pill p-app">Active</span>' : '<span class="pill p-rej">Disabled</span>'}</td><td style="text-align:right"><button class="btn btn-ghost btn-sm" onclick="AccountCheckerAdmin.edit('${u.id}')">Edit</button><button class="btn btn-ghost btn-sm" onclick="AccountCheckerAdmin.toggle('${u.id}')">${u.active ? "Disable" : "Enable"}</button></td></tr>`).join("");
-  $("#content").innerHTML = `<div class="card"><div class="card-pad" style="display:flex;align-items:center;border-bottom:1px solid var(--line)"><div><h3>Account Checkers</h3><div class="csub" style="margin:0">${users.length} users</div></div><button class="btn btn-primary btn-sm" style="margin-left:auto" onclick="AccountCheckerAdmin.edit()">+ Create Account Checker</button></div><div class="table-wrap"><table><thead><tr><th>Name</th><th>Username</th><th>Project Access</th><th>Status</th><th></th></tr></thead><tbody>${rows || '<tr><td colspan="5"><div class="empty">No Account Checkers yet.</div></td></tr>'}</tbody></table></div></div>`;
+  const rows = users
+    .map(
+      (u) =>
+        `<tr><td><b>${esc(u.name)}</b></td><td class="mono">${esc(u.username)}</td><td>${u.all_projects ? '<span class="tag">All</span>' : u.project_ids.length ? u.project_ids.map((id) => `<span class="tag">${esc((S.allProjects.find((p) => p.id === id) || {}).code || "?")}</span>`).join(" ") : '<span class="tag">none</span>'}</td><td>${u.active ? '<span class="pill p-app">Active</span>' : '<span class="pill p-rej">Disabled</span>'}</td><td style="text-align:right"><button class="btn btn-ghost btn-sm" onclick="AccountCheckerAdmin.edit('${u.id}')">Edit</button><button class="btn btn-ghost btn-sm" onclick="AccountCheckerAdmin.toggle('${u.id}')">${u.active ? "Disable" : "Enable"}</button></td></tr>`,
+    )
+    .join("");
+  $("#content").innerHTML =
+    `<div class="card"><div class="card-pad" style="display:flex;align-items:center;border-bottom:1px solid var(--line)"><div><h3>Account Checkers</h3><div class="csub" style="margin:0">${users.length} users</div></div><button class="btn btn-primary btn-sm" style="margin-left:auto" onclick="AccountCheckerAdmin.edit()">+ Create Account Checker</button></div><div class="table-wrap"><table><thead><tr><th>Name</th><th>Username</th><th>Project Access</th><th>Status</th><th></th></tr></thead><tbody>${rows || '<tr><td colspan="5"><div class="empty">No Account Checkers yet.</div></td></tr>'}</tbody></table></div></div>`;
 };
 
 Views.masters = async function () {
@@ -4099,7 +4010,7 @@ const ExpenseForm = {
 
     $("#ef-thumbs").innerHTML = [...files]
       .map((f, index) => {
-       const removeButton = `
+        const removeButton = `
   <button type="button"
     onclick="event.stopPropagation(); ExpenseForm.removeFile(${index}); ExpenseForm.preview();"
     style="position:absolute;top:4px;right:4px;width:24px;height:24px;padding:0;border:1px solid #999;border-radius:50%;background:#fff;color:#000;font-size:18px;line-height:20px;font-weight:bold;cursor:pointer;z-index:10;">
@@ -4662,42 +4573,84 @@ const BudgetsAdmin = {
 };
 const AccountCheckerAdmin = {
   edit(id) {
-    const u = id ? (Views._accountCheckers || []).find((x) => x.id === id) : null;
-    const chips = S.allProjects.filter((p) => p.active).map((p) => `<span class="chip ${u && !u.all_projects && u.project_ids.includes(p.id) ? "on" : ""}" data-pid="${p.id}" onclick="this.classList.toggle('on')">${esc(p.code)} · ${esc(p.name)}</span>`).join("");
+    const u = id
+      ? (Views._accountCheckers || []).find((x) => x.id === id)
+      : null;
+    const chips = S.allProjects
+      .filter((p) => p.active)
+      .map(
+        (p) =>
+          `<span class="chip ${u && !u.all_projects && u.project_ids.includes(p.id) ? "on" : ""}" data-pid="${p.id}" onclick="this.classList.toggle('on')">${esc(p.code)} · ${esc(p.name)}</span>`,
+      )
+      .join("");
     const allOn = u ? u.all_projects : false;
-    Modal.open(`<div class="modal-head"><h3>${u ? "Edit Account Checker" : "Create Account Checker"}</h3><button class="x" onclick="Modal.close()">×</button></div><div class="modal-body"><div class="frow"><div class="field"><label>Full name *</label><input id="ac-name" value="${esc(u ? u.name : "")}"></div><div class="field"><label>Username *</label><input id="ac-user" value="${esc(u ? u.username : "")}"></div></div><div class="frow"><div class="field"><label>Profile / Role</label><input value="Account Checker" disabled></div><div class="field"><label>${u ? "Reset password" : "Password *"}</label><input id="ac-pass" type="password" placeholder="${u ? "leave blank to keep" : "set a password"}"></div></div><div class="field full"><label>Project access</label><label style="display:flex;gap:8px;align-items:center;text-transform:none;letter-spacing:0;color:var(--ink);margin:4px 0 8px"><input type="checkbox" id="ac-all" ${allOn ? "checked" : ""} onchange="$('#ac-chips').style.opacity=this.checked?.4:1;$('#ac-chips').style.pointerEvents=this.checked?'none':'auto'"> All projects (head office)</label><div class="chips" id="ac-chips" style="${allOn ? "opacity:.4;pointer-events:none" : ""}">${chips}</div></div></div><div class="modal-foot"><button class="btn btn-ghost" onclick="Modal.close()">Cancel</button><button class="btn btn-primary" onclick="AccountCheckerAdmin.save(${u ? `'${u.id}'` : "null"})">Save</button></div>`);
+    Modal.open(
+      `<div class="modal-head"><h3>${u ? "Edit Account Checker" : "Create Account Checker"}</h3><button class="x" onclick="Modal.close()">×</button></div><div class="modal-body"><div class="frow"><div class="field"><label>Full name *</label><input id="ac-name" value="${esc(u ? u.name : "")}"></div><div class="field"><label>Username *</label><input id="ac-user" value="${esc(u ? u.username : "")}"></div></div><div class="frow"><div class="field"><label>Profile / Role</label><input value="Account Checker" disabled></div><div class="field"><label>${u ? "Reset password" : "Password *"}</label><input id="ac-pass" type="password" placeholder="${u ? "leave blank to keep" : "set a password"}"></div></div><div class="field full"><label>Project access</label><label style="display:flex;gap:8px;align-items:center;text-transform:none;letter-spacing:0;color:var(--ink);margin:4px 0 8px"><input type="checkbox" id="ac-all" ${allOn ? "checked" : ""} onchange="$('#ac-chips').style.opacity=this.checked?.4:1;$('#ac-chips').style.pointerEvents=this.checked?'none':'auto'"> All projects (head office)</label><div class="chips" id="ac-chips" style="${allOn ? "opacity:.4;pointer-events:none" : ""}">${chips}</div></div></div><div class="modal-foot"><button class="btn btn-ghost" onclick="Modal.close()">Cancel</button><button class="btn btn-primary" onclick="AccountCheckerAdmin.save(${u ? `'${u.id}'` : "null"})">Save</button></div>`,
+    );
   },
   async save(id) {
     const password = $("#ac-pass").value;
     const allProjects = $("#ac-all").checked;
-    const body = { name: $("#ac-name").value.trim(), username: $("#ac-user").value.trim(), allProjects, projectIds: allProjects ? [] : $$("#ac-chips .chip.on").map((c) => c.dataset.pid) };
+    const body = {
+      name: $("#ac-name").value.trim(),
+      username: $("#ac-user").value.trim(),
+      allProjects,
+      projectIds: allProjects
+        ? []
+        : $$("#ac-chips .chip.on").map((c) => c.dataset.pid),
+    };
     if (password) body.password = password;
     if (!body.name || !body.username || (!id && !password)) {
-      toast(id ? "Name and username required" : "Name, username and password required", "err");
+      toast(
+        id
+          ? "Name and username required"
+          : "Name, username and password required",
+        "err",
+      );
       return;
     }
     try {
-      await api(id ? "PATCH" : "POST", id ? `/account-checkers/${id}` : "/account-checkers", body);
+      await api(
+        id ? "PATCH" : "POST",
+        id ? `/account-checkers/${id}` : "/account-checkers",
+        body,
+      );
       Modal.close();
       toast("Saved", "ok");
       go("accountCheckers");
-    } catch (e) { toast(e.message, "err"); }
+    } catch (e) {
+      toast(e.message, "err");
+    }
   },
   async toggle(id) {
-    try { await api("POST", `/account-checkers/${id}/toggle`); go("accountCheckers"); }
-    catch (e) { toast(e.message, "err"); }
+    try {
+      await api("POST", `/account-checkers/${id}/toggle`);
+      go("accountCheckers");
+    } catch (e) {
+      toast(e.message, "err");
+    }
   },
 };
 
 const UsersAdmin = {
   changePassword() {
-    Modal.open(`<div class="modal-head"><h3>Change Password</h3><button class="x" onclick="Modal.close()">×</button></div><div class="modal-body"><div class="field"><label>New password *</label><input id="self-pass" type="password" autocomplete="new-password"></div></div><div class="modal-foot"><button class="btn btn-ghost" onclick="Modal.close()">Cancel</button><button class="btn btn-primary" onclick="UsersAdmin.savePassword()">Change Password</button></div>`);
+    Modal.open(
+      `<div class="modal-head"><h3>Change Password</h3><button class="x" onclick="Modal.close()">×</button></div><div class="modal-body"><div class="field"><label>New password *</label><input id="self-pass" type="password" autocomplete="new-password"></div></div><div class="modal-foot"><button class="btn btn-ghost" onclick="Modal.close()">Cancel</button><button class="btn btn-primary" onclick="UsersAdmin.savePassword()">Change Password</button></div>`,
+    );
   },
   async savePassword() {
     const password = $("#self-pass").value;
-    if (!password) { toast("Password is required", "err"); return; }
-    try { await api("POST", "/me/password", { password }); Modal.close(); toast("Password changed", "ok"); }
-    catch (e) { toast(e.message, "err"); }
+    if (!password) {
+      toast("Password is required", "err");
+      return;
+    }
+    try {
+      await api("POST", "/me/password", { password });
+      Modal.close();
+      toast("Password changed", "ok");
+    } catch (e) {
+      toast(e.message, "err");
+    }
   },
   edit(id) {
     const u = id ? (Views._users || []).find((x) => x.id === id) : null;
