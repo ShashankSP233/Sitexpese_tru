@@ -3650,11 +3650,31 @@ Views.funds = async function () {
       )
       .join("") ||
     '<tr><td colspan="4"><div class="empty">No projects in your access</div></td></tr>';
+  const fundMovements = new Map();
+  d.funds.forEach((f) => {
+    const releasedRequest =
+      f.projectCode === "ADMIN-FUND" && f.kind === "injection"
+        ? String(f.note || "").match(/^Fund release (.+?) · /)
+        : null;
+    const key = releasedRequest
+      ? `fund-request:${releasedRequest[1]}`
+      : `fund:${f.id}`;
+    const existing = fundMovements.get(key);
+    if (existing) {
+      existing.amount += f.amount;
+    } else {
+      fundMovements.set(key, {
+        ...f,
+        amount: f.amount,
+        requestNo: releasedRequest?.[1] || null,
+      });
+    }
+  });
   const fundList =
-    d.funds
+    [...fundMovements.values()]
       .map(
         (f) =>
-          `<tr><td>${fmtDate(f.date)}</td><td>${esc(f.projectCode || "—")}</td><td>${f.kind === "allocation" ? "→ " + esc(f.toUserName || "site") : "Released"}</td><td class="num"><span class="tag" style="background:var(--green-soft);color:var(--green)">+ ${money(f.amount)}</span></td><td>${esc(f.addedByName || "—")}</td></tr>`,
+          `<tr><td>${fmtDate(f.date)}</td><td>${esc(f.projectCode || "—")}</td><td>${f.requestNo ? `Fund Request ${esc(f.requestNo)} released` : f.kind === "allocation" ? "→ " + esc(f.toUserName || "site") : "Released"}</td><td class="num"><span class="tag" style="background:var(--green-soft);color:var(--green)">+ ${money(f.amount)}</span></td><td>${esc(f.addedByName || "—")}</td></tr>`,
       )
       .join("") ||
     '<tr><td colspan="5"><div class="empty">No funds recorded yet</div></td></tr>';
