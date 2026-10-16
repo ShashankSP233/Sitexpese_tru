@@ -2149,6 +2149,7 @@ Views._printFundRequest = async function (id) {
           ================================================= */
 
           .page {
+            width: 100%;
             position: relative;
           }
           .project-name-large {
@@ -2481,6 +2482,9 @@ Views._printFundRequest = async function (id) {
 
             border-collapse: collapse;
 
+            /* Prevent long voucher details from widening the table on print. */
+            table-layout: fixed;
+
             font-size: 9px;
           }
 
@@ -2491,6 +2495,8 @@ Views._printFundRequest = async function (id) {
             padding: 4px 5px;
 
             vertical-align: top;
+
+            overflow-wrap: anywhere;
           }
 
           .annexure-table th {
