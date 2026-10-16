@@ -2064,7 +2064,8 @@ Views._printFundRequest = async function (id) {
 
           @page {
             size: A4 portrait;
-            margin: 12mm;
+            /* Keep the layout inside a printer-friendly A4 content area. */
+            margin: 10mm;
           }
 
           * {
@@ -2148,7 +2149,6 @@ Views._printFundRequest = async function (id) {
           ================================================= */
 
           .page {
-            min-height: 270mm;
             position: relative;
           }
           .project-name-large {
