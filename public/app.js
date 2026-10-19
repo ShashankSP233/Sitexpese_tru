@@ -2523,6 +2523,36 @@ Views._printFundRequest = async function (id) {
             font-weight: 700;
           }
 
+          .annexure-table th:nth-child(1) {
+            width: 4%;
+          }
+
+          .annexure-table th:nth-child(2) {
+            width: 10%;
+          }
+
+          .annexure-table th:nth-child(3) {
+            width: 8%;
+          }
+
+          .annexure-table th:nth-child(4),
+          .annexure-table th:nth-child(5),
+          .annexure-table th:nth-child(6) {
+            width: 10%;
+          }
+
+          .annexure-table th:nth-child(7) {
+            width: 32%;
+          }
+
+          .annexure-table th:nth-child(8) {
+            width: 5%;
+          }
+
+          .annexure-table th:nth-child(9) {
+            width: 11%;
+          }
+
           .annexure-table .num {
             text-align: right;
 
