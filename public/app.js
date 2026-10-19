@@ -2081,7 +2081,13 @@ Views._printFundRequest = async function (id) {
           @page {
             size: A4 portrait;
             /* Reserve extra side clearance for printers with larger non-printable edges. */
-            margin: 10mm 22mm;
+            margin: 10mm 22mm 18mm;
+
+            @bottom-center {
+              content: "Page " counter(page) " of " counter(pages);
+              font: 9px Arial, Helvetica, sans-serif;
+              color: #555;
+            }
           }
 
           * {
