@@ -301,6 +301,8 @@ async function buildNav() {
       { id: "dashboard", ic: "▦", label: "Dashboard" },
       { id: "expenses", ic: "☰", label: "All Expenses" },
     );
+  if (S.user.role === "site")
+    items.push({ id: "myQueries", ic: "?", label: "My Queries" });
   if (can.reviewTab())
     items.push({
       id: "review",
@@ -372,6 +374,8 @@ async function buildNav() {
       { id: "dashboard", ic: "▦", label: "Home" },
       { id: "expenses", ic: "☰", label: "Expenses" },
     );
+  if (S.user.role === "site")
+    bn.push({ id: "myQueries", ic: "?", label: "Queries" });
   if (can.create()) bn.push({ id: "__new", ic: "+", label: "New", add: true });
   if (can.reviewTab())
     bn.push({ id: "review", ic: "✓", label: "Review", badge: pend || "" });
@@ -402,6 +406,7 @@ async function buildNav() {
 const TITLES = {
   dashboard: ["Dashboard", "Overview of site expenses"],
   expenses: ["All Expenses", "Every recorded voucher"],
+  myQueries: ["My Queries", "Active queries directed to you"],
   review: ["Review Queue", "Items awaiting your action"],
   funds: ["Funds & Balance", "Money given vs spent per project"],
   reports: ["Reports & Export", "Filter and download CSV"],
@@ -527,7 +532,19 @@ function expenseTable(rows, opts) {
   opts = opts || {};
   const showReviewActions = opts.reviewActions === true;
   if (!rows.length) return '<div class="empty">No matching expenses.</div>';
-  return `<div class="table-wrap"><table><thead><tr><th>Voucher</th><th>Date</th><th>Details</th><th>Category</th><th>Project</th><th class="num">Amount</th><th>Status</th>${showReviewActions ? "<th>Actions</th>" : ""}</tr></thead><tbody>${rows.map((e) => `<tr class="click" onclick="Detail.open('${e.id}')"><td class="mono">${esc(e.voucher_no)}</td><td>${fmtDate(e.date)}</td><td>${esc((e.details || "").slice(0, 42))}${(e.details || "").length > 42 ? "…" : ""} ${e.evidenceCount ? `<span class="tag">📎${e.evidenceCount}</span>` : ""}${e.paid ? ' <span class="tag">💰 Paid</span>' : ""} ${e.status === "Query" && e.activeQuery?.hasReply ? '<span class="tag" style="color:var(--green)">↩ Reply received</span>' : ""} ${previousDelayBadge(e)} ${overallSlaBadge(e)} ${slaBadge(e)}${e.status === "Query" && e.activeQuery?.hasReply ? `<div class="muted" style="margin-top:4px"><b>Reply:</b> ${esc((e.activeQuery.replyText || "").slice(0, 100))}${(e.activeQuery.replyText || "").length > 100 ? "…" : ""}</div>` : ""}</td><td><span class="tag">${esc(e.categoryName)}</span></td><td>${esc(e.projectCode)}</td><td class="num">${money(e.amount)}</td><td>${pill(e.status)}</td>${showReviewActions ? `<td>${e.status === "Accounts Reviewed" ? `<div class="queue-actions" onclick="event.stopPropagation()"><button class="btn btn-primary btn-sm" style="background:var(--green)" onclick="Detail.advance('${e.id}','approve')">Accept</button><button class="btn btn-ghost btn-sm" style="color:var(--red)" onclick="Detail.reject('${e.id}')">Reject</button><button class="btn btn-ghost btn-sm" onclick="Detail.raiseQuery('${e.id}')">Query</button></div>` : ""}</td>` : ""}</tr>`).join("")}</tbody></table></div>`;
+  return `<div class="table-wrap"><table><thead><tr><th>Voucher</th><th>Date</th><th>Details</th><th>Category</th><th>Project</th><th class="num">Amount</th><th>Status</th>${showReviewActions ? "<th>Actions</th>" : ""}</tr></thead><tbody>${rows
+    .map((e) => {
+      const queryPreview =
+        e.status === "Query" && e.activeQuery?.queryText
+          ? `<div class="muted" style="margin-top:4px"><b>Query:</b> ${esc(e.activeQuery.queryText.slice(0, 100))}${e.activeQuery.queryText.length > 100 ? "…" : ""}</div>`
+          : "";
+      const replyPreview =
+        e.status === "Query" && e.activeQuery?.hasReply
+          ? `<div class="muted" style="margin-top:4px"><b>Reply:</b> ${esc((e.activeQuery.replyText || "").slice(0, 100))}${(e.activeQuery.replyText || "").length > 100 ? "…" : ""}</div>`
+          : "";
+      return `<tr class="click" onclick="Detail.open('${e.id}')"><td class="mono">${esc(e.voucher_no)}</td><td>${fmtDate(e.date)}</td><td>${esc((e.details || "").slice(0, 42))}${(e.details || "").length > 42 ? "…" : ""} ${e.evidenceCount ? `<span class="tag">📎${e.evidenceCount}</span>` : ""}${e.paid ? ' <span class="tag">💰 Paid</span>' : ""} ${e.status === "Query" && e.activeQuery?.hasReply ? '<span class="tag" style="color:var(--green)">↩ Reply received</span>' : ""} ${previousDelayBadge(e)} ${overallSlaBadge(e)} ${slaBadge(e)}${queryPreview}${replyPreview}</td><td><span class="tag">${esc(e.categoryName)}</span></td><td>${esc(e.projectCode)}</td><td class="num">${money(e.amount)}</td><td>${pill(e.status)}</td>${showReviewActions ? `<td>${e.status === "Accounts Reviewed" ? `<div class="queue-actions" onclick="event.stopPropagation()"><button class="btn btn-primary btn-sm" style="background:var(--green)" onclick="Detail.advance('${e.id}','approve')">Accept</button><button class="btn btn-ghost btn-sm" style="color:var(--red)" onclick="Detail.reject('${e.id}')">Reject</button><button class="btn btn-ghost btn-sm" onclick="Detail.raiseQuery('${e.id}')">Query</button></div>` : ""}</td>` : ""}</tr>`;
+    })
+    .join("")}</tbody></table></div>`;
 }
 
 /* ============ views ============ */
@@ -3536,6 +3553,17 @@ Views._confirmPay = async function () {
   } catch (e) {
     toast(e.message, "err");
   }
+};
+
+Views.myQueries = async function () {
+  const expenses = await api("GET", "/expenses");
+  const queries = expenses.filter(
+    (e) =>
+      e.status === "Query" &&
+      e.activeQuery &&
+      e.activeQuery.assignedTo === S.user.id,
+  );
+  $("#content").innerHTML = `<div class="card card-pad" style="margin-bottom:16px"><div class="csub" style="margin:0">Open queries assigned to you. Select a voucher to read the full conversation and reply.</div></div><div class="card card-pad" style="margin-bottom:16px"><h3 style="margin:0">${queries.length} active ${queries.length === 1 ? "query" : "queries"}</h3></div><div class="card">${expenseTable(queries)}</div>`;
 };
 
 Views.expenses = async function () {

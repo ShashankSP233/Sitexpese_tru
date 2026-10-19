@@ -507,7 +507,7 @@ router.get("/expenses", async (req, res) => {
     const queryIn = queriedExpenseIds.map(() => "?").join(",");
     const openQueries = await db
       .prepare(
-        `SELECT id, expense_id, prev_status, raised_by FROM queries
+        `SELECT id, expense_id, prev_status, raised_by, assigned_to, text FROM queries
          WHERE status='Open' AND expense_id IN (${queryIn})
          ORDER BY created_at DESC`,
       )
@@ -542,6 +542,8 @@ router.get("/expenses", async (req, res) => {
         const hasReply = !!latestReply;
         expense.activeQuery = {
           prevStatus: query.prev_status,
+          assignedTo: query.assigned_to,
+          queryText: query.text || "",
           hasReply,
           replyText: hasReply ? latestReply.text : "",
         };
