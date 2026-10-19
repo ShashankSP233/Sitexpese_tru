@@ -2168,6 +2168,7 @@ Views._printFundRequest = async function (id) {
           .page {
             width: 100%;
             position: relative;
+            padding-top: 5mm;
           }
           .project-name-large {
             display: block;
@@ -2542,6 +2543,7 @@ Views._printFundRequest = async function (id) {
 
           .annexure {
             page-break-before: always;
+            padding-top: 5mm;
           }
 
           .annexure-title {
