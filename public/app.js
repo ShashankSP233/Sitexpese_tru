@@ -2080,14 +2080,7 @@ Views._printFundRequest = async function (id) {
 
           @page {
             size: A4 portrait;
-            /* Reserve extra side clearance for printers with larger non-printable edges. */
-            margin: 10mm 22mm 18mm;
-
-            @bottom-center {
-              content: "Page " counter(page) " of " counter(pages);
-              font: 9px Arial, Helvetica, sans-serif;
-              color: #555;
-            }
+            margin: 0;
           }
 
           * {
@@ -2174,7 +2167,33 @@ Views._printFundRequest = async function (id) {
           .page {
             width: 100%;
             position: relative;
-            padding-top: 5mm;
+            padding-top: 0;
+          }
+
+          .print-sheet {
+            position: relative;
+            width: 166mm;
+            height: 287mm;
+            margin: 0 auto;
+            padding: 8mm 0 15mm;
+            overflow: hidden;
+            page-break-after: always;
+            break-after: page;
+          }
+
+          .print-sheet:last-child {
+            page-break-after: auto;
+            break-after: auto;
+          }
+
+          .print-page-number {
+            position: absolute;
+            bottom: 4mm;
+            left: 0;
+            width: 100%;
+            text-align: center;
+            color: #555;
+            font: 9px Arial, Helvetica, sans-serif;
           }
           .project-name-large {
             display: block;
@@ -2578,8 +2597,8 @@ Views._printFundRequest = async function (id) {
           }
 
           .annexure {
-            page-break-before: always;
-            padding-top: 5mm;
+            page-break-before: auto;
+            padding-top: 0;
           }
 
           .annexure-title {
@@ -2597,7 +2616,7 @@ Views._printFundRequest = async function (id) {
           }
 
           .annexure {
-            page-break-before: always;
+            page-break-before: auto;
           }
 
           .annexure-heading {
@@ -2763,12 +2782,8 @@ Views._printFundRequest = async function (id) {
           }
 
           @media print {
-
-            body {
-              width: 166mm;
-              margin: 0 auto;
-            }
-
+            html, body { width: 100%; margin: 0; padding: 0; }
+            .print-sheet { margin: 0 auto; }
           }
 
         </style>
@@ -3059,6 +3074,72 @@ Views._printFundRequest = async function (id) {
         <script>
 
           window.onload = function () {
+            const body = document.body;
+            const summary = body.querySelector(".page");
+            const sourceAnnexures = Array.from(body.querySelectorAll(".annexure"));
+            const sheets = [];
+
+            function createSheet() {
+              const sheet = document.createElement("section");
+              sheet.className = "print-sheet";
+              body.insertBefore(sheet, body.querySelector("script"));
+              sheets.push(sheet);
+              return sheet;
+            }
+
+            const firstSheet = createSheet();
+            if (summary) firstSheet.appendChild(summary);
+
+            sourceAnnexures.forEach((source) => {
+              const sourceTable = source.querySelector(".annexure-table");
+              if (!sourceTable) return;
+              const rows = Array.from(sourceTable.tBodies[0]?.rows || []);
+              const total = sourceTable.tFoot?.cloneNode(true);
+              let currentSheet = null;
+              let currentSection = null;
+              let currentBody = null;
+
+              function startAnnexureSheet() {
+                currentSheet = createSheet();
+                currentSection = source.cloneNode(true);
+                currentBody = currentSection.querySelector("tbody");
+                currentBody.replaceChildren();
+                currentSection.querySelector("tfoot")?.remove();
+                currentSheet.appendChild(currentSection);
+              }
+
+              startAnnexureSheet();
+              rows.forEach((row) => {
+                currentBody.appendChild(row.cloneNode(true));
+                if (currentSheet.scrollHeight > currentSheet.clientHeight && currentBody.rows.length > 1) {
+                  const overflowRow = currentBody.lastElementChild;
+                  overflowRow.remove();
+                  startAnnexureSheet();
+                  currentBody.appendChild(overflowRow);
+                }
+              });
+
+              if (total) {
+                currentSection.querySelector("table").appendChild(total);
+                if (currentSheet.scrollHeight > currentSheet.clientHeight && currentBody.rows.length > 1) {
+                  currentSection.querySelector("tfoot")?.remove();
+                  const lastRow = currentBody.lastElementChild;
+                  lastRow.remove();
+                  startAnnexureSheet();
+                  currentBody.appendChild(lastRow);
+                  currentSection.querySelector("table").appendChild(total);
+                }
+              }
+            });
+
+            sourceAnnexures.forEach((source) => source.remove());
+            sheets.forEach((sheet, index) => {
+              const pageNumber = document.createElement("div");
+              pageNumber.className = "print-page-number";
+              pageNumber.textContent = "Page " + (index + 1) + " of " + sheets.length;
+              sheet.appendChild(pageNumber);
+            });
+
             window.print();
           };
 
