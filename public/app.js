@@ -2073,7 +2073,8 @@ Views._printFundRequest = async function (id) {
           }
 
           body {
-            margin: 0;
+            width: 166mm;
+            margin: 0 auto;
             padding: 0;
             font-family:
               Arial,
@@ -2710,7 +2711,8 @@ Views._printFundRequest = async function (id) {
           @media print {
 
             body {
-              margin: 0;
+              width: 166mm;
+              margin: 0 auto;
             }
 
           }
