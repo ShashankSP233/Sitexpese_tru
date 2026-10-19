@@ -2064,8 +2064,8 @@ Views._printFundRequest = async function (id) {
 
           @page {
             size: A4 portrait;
-            /* Keep the layout inside a printer-friendly A4 content area. */
-            margin: 10mm;
+            /* Reserve extra side clearance for printers with larger non-printable edges. */
+            margin: 10mm 22mm;
           }
 
           * {
