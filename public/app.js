@@ -266,27 +266,26 @@ const can = {
 
 function pendingForMe(list) {
   const r = S.user.role;
-  if (r === "checker") return list.filter((e) => e.status === "Submitted");
-  if (r === "purchase") return list.filter((e) => e.status === "Checked");
-  if (r === "operations")
-    return list.filter((e) => e.status === "Purchase Reviewed");
-  if (r === "accounts")
-    return list.filter((e) =>
-      ["Operations Reviewed", "Accounts Reviewed"].includes(e.status),
-    );
-  if (r === "account_checker")
-    return list.filter((e) => e.status === "Operations Reviewed");
-  if (r === "admin")
-    return list.filter((e) =>
-      [
-        "Submitted",
-        "Checked",
-        "Purchase Reviewed",
-        "Operations Reviewed",
-        "Accounts Reviewed",
-      ].includes(e.status),
-    );
-  return [];
+  const stageByRole = {
+    checker: ["Submitted"],
+    purchase: ["Checked"],
+    operations: ["Purchase Reviewed"],
+    accounts: ["Operations Reviewed", "Accounts Reviewed"],
+    account_checker: ["Operations Reviewed"],
+    admin: [
+      "Submitted",
+      "Checked",
+      "Purchase Reviewed",
+      "Operations Reviewed",
+      "Accounts Reviewed",
+    ],
+  };
+  const stages = stageByRole[r] || [];
+  return list.filter(
+    (e) =>
+      stages.includes(e.status) ||
+      e.status === "Query",
+  );
 }
 async function buildNav() {
   let pend = 0;
@@ -528,7 +527,7 @@ function expenseTable(rows, opts) {
   opts = opts || {};
   const showReviewActions = opts.reviewActions === true;
   if (!rows.length) return '<div class="empty">No matching expenses.</div>';
-  return `<div class="table-wrap"><table><thead><tr><th>Voucher</th><th>Date</th><th>Details</th><th>Category</th><th>Project</th><th class="num">Amount</th><th>Status</th>${showReviewActions ? "<th>Actions</th>" : ""}</tr></thead><tbody>${rows.map((e) => `<tr class="click" onclick="Detail.open('${e.id}')"><td class="mono">${esc(e.voucher_no)}</td><td>${fmtDate(e.date)}</td><td>${esc((e.details || "").slice(0, 42))}${(e.details || "").length > 42 ? "…" : ""} ${e.evidenceCount ? `<span class="tag">📎${e.evidenceCount}</span>` : ""}${e.paid ? ' <span class="tag">💰 Paid</span>' : ""} ${previousDelayBadge(e)} ${overallSlaBadge(e)} ${slaBadge(e)}</td><td><span class="tag">${esc(e.categoryName)}</span></td><td>${esc(e.projectCode)}</td><td class="num">${money(e.amount)}</td><td>${pill(e.status)}</td>${showReviewActions ? `<td>${e.status === "Accounts Reviewed" ? `<div class="queue-actions" onclick="event.stopPropagation()"><button class="btn btn-primary btn-sm" style="background:var(--green)" onclick="Detail.advance('${e.id}','approve')">Accept</button><button class="btn btn-ghost btn-sm" style="color:var(--red)" onclick="Detail.reject('${e.id}')">Reject</button><button class="btn btn-ghost btn-sm" onclick="Detail.raiseQuery('${e.id}')">Query</button></div>` : ""}</td>` : ""}</tr>`).join("")}</tbody></table></div>`;
+  return `<div class="table-wrap"><table><thead><tr><th>Voucher</th><th>Date</th><th>Details</th><th>Category</th><th>Project</th><th class="num">Amount</th><th>Status</th>${showReviewActions ? "<th>Actions</th>" : ""}</tr></thead><tbody>${rows.map((e) => `<tr class="click" onclick="Detail.open('${e.id}')"><td class="mono">${esc(e.voucher_no)}</td><td>${fmtDate(e.date)}</td><td>${esc((e.details || "").slice(0, 42))}${(e.details || "").length > 42 ? "…" : ""} ${e.evidenceCount ? `<span class="tag">📎${e.evidenceCount}</span>` : ""}${e.paid ? ' <span class="tag">💰 Paid</span>' : ""} ${e.status === "Query" && e.activeQuery?.hasReply ? '<span class="tag" style="color:var(--green)">↩ Reply received</span>' : ""} ${previousDelayBadge(e)} ${overallSlaBadge(e)} ${slaBadge(e)}${e.status === "Query" && e.activeQuery?.hasReply ? `<div class="muted" style="margin-top:4px"><b>Reply:</b> ${esc((e.activeQuery.replyText || "").slice(0, 100))}${(e.activeQuery.replyText || "").length > 100 ? "…" : ""}</div>` : ""}</td><td><span class="tag">${esc(e.categoryName)}</span></td><td>${esc(e.projectCode)}</td><td class="num">${money(e.amount)}</td><td>${pill(e.status)}</td>${showReviewActions ? `<td>${e.status === "Accounts Reviewed" ? `<div class="queue-actions" onclick="event.stopPropagation()"><button class="btn btn-primary btn-sm" style="background:var(--green)" onclick="Detail.advance('${e.id}','approve')">Accept</button><button class="btn btn-ghost btn-sm" style="color:var(--red)" onclick="Detail.reject('${e.id}')">Reject</button><button class="btn btn-ghost btn-sm" onclick="Detail.raiseQuery('${e.id}')">Query</button></div>` : ""}</td>` : ""}</tr>`).join("")}</tbody></table></div>`;
 }
 
 /* ============ views ============ */
@@ -3583,17 +3582,60 @@ Views._filterExp = function () {
 
 Views.review = async function () {
   const rows = pendingForMe(await api("GET", "/expenses"));
+  Views._reviewRows = rows;
   const hint =
     {
-      checker: "Submitted items awaiting your check.",
-      purchase: "Checked items awaiting purchase review.",
-      operations: "Purchase-reviewed items awaiting operations review.",
-      accounts: "Items awaiting accounts review / approval.",
-      account_checker: "Items awaiting Level 4 accounts review.",
-      admin: "All items in the review pipeline.",
+      checker: "Submitted items for your review and open queries at every stage.",
+      purchase: "Checked items for your review and open queries at every stage.",
+      operations: "Purchase-reviewed items and open queries at every stage.",
+      accounts: "Items awaiting accounts review and open queries at every stage.",
+      account_checker: "Level 4 items and open queries at every stage.",
+      admin: "All items and open queries in the review pipeline.",
     }[S.user.role] || "";
-  $("#content").innerHTML =
-    `<div class="card card-pad" style="margin-bottom:16px;display:flex;align-items:center"><div class="csub" style="margin:0">${esc(hint)}</div><span class="tag" style="margin-left:auto">${rows.length} pending</span></div><div class="card">${expenseTable(rows, { reviewActions: S.user.role === "accounts" })}</div>`;
+  const purchaseFilters =
+    S.user.role === "purchase"
+      ? `<div class="toolbar card card-pad" style="padding:12px 14px;margin-bottom:16px">
+          <input id="review-search" placeholder="Search voucher no. or details…" oninput="Views._filterReviewQueue()">
+          <select id="review-status" onchange="Views._filterReviewQueue()"><option value="">All statuses</option><option value="Checked">Checked</option><option value="Query">Query</option></select>
+          <select id="review-project" onchange="Views._filterReviewQueue()"><option value="">All projects</option>${[...new Map(rows.map((e) => [e.project_id, { id: e.project_id, name: e.projectName }])).values()].map((p) => `<option value="${esc(p.id)}">${esc(p.name)}</option>`).join("")}</select>
+          <select id="review-category" onchange="Views._filterReviewQueue()"><option value="">All categories</option>${[...new Map(rows.map((e) => [e.category_id, { id: e.category_id, name: e.categoryName }])).values()].map((c) => `<option value="${esc(c.id)}">${esc(c.name)}</option>`).join("")}</select>
+          <select id="review-sort" onchange="Views._filterReviewQueue()"><option value="submitted-newest">Submitted: newest</option><option value="submitted-oldest">Submitted: oldest</option><option value="date-newest">Voucher date: newest</option><option value="date-oldest">Voucher date: oldest</option><option value="voucher-asc">Voucher no.: A–Z</option><option value="amount-desc">Amount: high to low</option><option value="amount-asc">Amount: low to high</option></select>
+          <span id="review-count" class="csub" style="margin:0"></span>
+        </div>`
+      : "";
+  $("#content").innerHTML = `<div class="card card-pad" style="margin-bottom:16px;display:flex;align-items:center"><div class="csub" style="margin:0">${esc(hint)}</div><span class="tag" style="margin-left:auto">${rows.length} pending</span></div>${purchaseFilters}<div class="card" id="review-table">${S.user.role === "purchase" ? "" : expenseTable(rows, { reviewActions: S.user.role === "accounts" })}</div>`;
+  if (S.user.role === "purchase") Views._filterReviewQueue();
+};
+Views._filterReviewQueue = function () {
+  let rows = [...(Views._reviewRows || [])];
+  const search = (($("#review-search") || {}).value || "").trim().toLowerCase();
+  const status = $("#review-status").value;
+  const project = $("#review-project").value;
+  const category = $("#review-category").value;
+  const sort = $("#review-sort").value;
+  if (search) {
+    rows = rows.filter(
+      (e) =>
+        String(e.voucher_no || "").toLowerCase().includes(search) ||
+        String(e.details || "").toLowerCase().includes(search),
+    );
+  }
+  if (status) rows = rows.filter((e) => e.status === status);
+  if (project) rows = rows.filter((e) => e.project_id === project);
+  if (category) rows = rows.filter((e) => e.category_id === category);
+  const voucherDate = (e) => Date.parse(e.date || "") || e.created_at || 0;
+  rows.sort((a, b) => {
+    if (sort === "submitted-oldest") return a.created_at - b.created_at;
+    if (sort === "date-newest") return voucherDate(b) - voucherDate(a);
+    if (sort === "date-oldest") return voucherDate(a) - voucherDate(b);
+    if (sort === "voucher-asc")
+      return String(a.voucher_no || "").localeCompare(String(b.voucher_no || ""));
+    if (sort === "amount-desc") return Number(b.amount || 0) - Number(a.amount || 0);
+    if (sort === "amount-asc") return Number(a.amount || 0) - Number(b.amount || 0);
+    return b.created_at - a.created_at;
+  });
+  $("#review-table").innerHTML = expenseTable(rows);
+  $("#review-count").textContent = `${rows.length} vouchers · ${money(rows.reduce((sum, e) => sum + Number(e.amount || 0), 0))}`;
 };
 
 Views.funds = async function () {

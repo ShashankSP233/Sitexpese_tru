@@ -499,7 +499,56 @@ router.get("/expenses", async (req, res) => {
       `SELECT e.* FROM expenses e WHERE 1=1 ${sc.where} ${extra} ORDER BY e.created_at DESC`,
     )
     .all(...params);
-  res.json(await Promise.all(rows.map((r) => decorate(r, m))));
+  const expenses = await Promise.all(rows.map((r) => decorate(r, m)));
+  const queriedExpenseIds = expenses
+    .filter((e) => e.status === "Query")
+    .map((e) => e.id);
+  if (queriedExpenseIds.length) {
+    const queryIn = queriedExpenseIds.map(() => "?").join(",");
+    const openQueries = await db
+      .prepare(
+        `SELECT id, expense_id, prev_status, raised_by FROM queries
+         WHERE status='Open' AND expense_id IN (${queryIn})
+         ORDER BY created_at DESC`,
+      )
+      .all(...queriedExpenseIds);
+    if (openQueries.length) {
+      const messageIn = openQueries.map(() => "?").join(",");
+      const messages = await db
+        .prepare(
+          `SELECT query_id, by_user, text, at FROM query_messages
+           WHERE query_id IN (${messageIn}) ORDER BY at ASC`,
+        )
+        .all(...openQueries.map((q) => q.id));
+      const raisedByByQuery = new Map(
+        openQueries.map((query) => [query.id, query.raised_by]),
+      );
+      const latestReplyByQuery = new Map();
+      messages.forEach((message) => {
+        if (message.by_user !== raisedByByQuery.get(message.query_id)) {
+          latestReplyByQuery.set(message.query_id, message);
+        }
+      });
+      const queryByExpense = new Map();
+      openQueries.forEach((query) => {
+        if (!queryByExpense.has(query.expense_id)) {
+          queryByExpense.set(query.expense_id, query);
+        }
+      });
+      expenses.forEach((expense) => {
+        const query = queryByExpense.get(expense.id);
+        if (!query) return;
+        const latestReply = latestReplyByQuery.get(query.id);
+        const hasReply = !!latestReply;
+        expense.activeQuery = {
+          prevStatus: query.prev_status,
+          hasReply,
+          replyText: hasReply ? latestReply.text : "",
+        };
+      });
+    }
+  }
+  res.json(expenses);
 });
 
 router.get("/expenses/:id", async (req, res) => {
