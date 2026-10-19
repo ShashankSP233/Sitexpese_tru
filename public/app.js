@@ -3607,7 +3607,41 @@ Views.review = async function () {
         </div>`
       : "";
   $("#content").innerHTML = `<div class="card card-pad" style="margin-bottom:16px;display:flex;align-items:center"><div class="csub" style="margin:0">${esc(hint)}</div><span class="tag" style="margin-left:auto">${rows.length} pending</span></div><div class="card card-pad" style="display:flex;gap:8px;margin-bottom:16px"><button id="review-tab-queue" class="btn btn-primary btn-sm" onclick="Views._showReviewTab('queue')">My Queue (${rows.length})</button><button id="review-tab-queries" class="btn btn-ghost btn-sm" onclick="Views._showReviewTab('queries')">All Queries (${queries.length})</button></div>${purchaseFilters}<div class="card" id="review-table"></div>`;
-  Views._showReviewTab("queue");
+  const saved = S.user.role === "purchase" ? Views._loadReviewPreferences() : {};
+  if (S.user.role === "purchase") {
+    $("#review-search").value = saved.search || "";
+    $("#review-status").value = saved.status || "";
+    $("#review-project").value = saved.project || "";
+    $("#review-category").value = saved.category || "";
+    $("#review-sort").value = saved.sort || "submitted-newest";
+  }
+  Views._showReviewTab(saved.tab === "queries" ? "queries" : "queue");
+};
+Views._reviewPreferencesKey = function () {
+  return `sitexpense:review-queue:${S.user.id}`;
+};
+Views._loadReviewPreferences = function () {
+  try {
+    return JSON.parse(localStorage.getItem(Views._reviewPreferencesKey())) || {};
+  } catch (e) {
+    return {};
+  }
+};
+Views._saveReviewPreferences = function () {
+  if (S.user.role !== "purchase") return;
+  try {
+    localStorage.setItem(
+      Views._reviewPreferencesKey(),
+      JSON.stringify({
+        tab: Views._reviewTab,
+        search: $("#review-search")?.value || "",
+        status: $("#review-status")?.value || "",
+        project: $("#review-project")?.value || "",
+        category: $("#review-category")?.value || "",
+        sort: $("#review-sort")?.value || "submitted-newest",
+      }),
+    );
+  } catch (e) {}
 };
 Views._showReviewTab = function (tab) {
   Views._reviewTab = tab;
@@ -3619,8 +3653,7 @@ Views._showReviewTab = function (tab) {
     queryButton.className = `btn btn-sm ${tab === "queries" ? "btn-primary" : "btn-ghost"}`;
   const statusFilter = $("#review-status");
   if (statusFilter) {
-    statusFilter.disabled = tab === "queries";
-    statusFilter.value = tab === "queries" ? "Query" : "";
+    statusFilter.style.display = tab === "queries" ? "none" : "";
   }
   Views._filterReviewQueue();
 };
@@ -3664,6 +3697,7 @@ Views._filterReviewQueue = function () {
   const reviewCount = $("#review-count");
   if (reviewCount)
     reviewCount.textContent = `${rows.length} vouchers · ${money(rows.reduce((sum, e) => sum + Number(e.amount || 0), 0))}`;
+  Views._saveReviewPreferences();
 };
 
 Views.funds = async function () {
