@@ -928,7 +928,7 @@ Views.downloadVouchers = async function () {
         <input id="dv-from" type="date" title="From date" onchange="Views._filterDownloadVouchers()">
         <input id="dv-to" type="date" title="To date" onchange="Views._filterDownloadVouchers()">
         <input id="dv-fr-no" type="search" placeholder="FR No." aria-label="Filter by fund request number" oninput="Views._filterDownloadVouchers()">
-        <button class="btn btn-ghost" onclick="Views._csvDownloadVouchers()">Download Filtered CSV</button>
+        <button class="btn btn-ghost" onclick="Views._csvDownloadVouchers()">Download CSV (Gross / GST / Total)</button>
         <button class="btn btn-primary" onclick="Views._downloadSelectedVouchers()">Download Selected</button>
       </div>
       <div id="dv-count" class="csub" style="margin:0 0 12px"></div>
