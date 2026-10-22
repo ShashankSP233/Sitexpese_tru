@@ -177,6 +177,14 @@ CREATE TABLE IF NOT EXISTS expenses (
   FOREIGN KEY (location_id) REFERENCES locations(id) ON DELETE RESTRICT,
   FOREIGN KEY (created_by) REFERENCES users(id) ON DELETE RESTRICT
 );
+CREATE TABLE IF NOT EXISTS expense_amount_breakdowns (
+  expense_id TEXT PRIMARY KEY,
+  gross_amount BIGINT NOT NULL,
+  gst_amount BIGINT NOT NULL,
+  total_amount BIGINT NOT NULL,
+  created_at BIGINT NOT NULL,
+  FOREIGN KEY (expense_id) REFERENCES expenses(id) ON DELETE CASCADE
+);
 CREATE TABLE IF NOT EXISTS evidence (
   id TEXT PRIMARY KEY,
   expense_id TEXT NOT NULL,

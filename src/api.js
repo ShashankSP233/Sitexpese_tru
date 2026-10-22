@@ -33,6 +33,7 @@ const storage = multer.diskStorage({
     cb(null, uid() + ext);
   },
 });
+
 const upload = multer({
   storage,
   limits: { fileSize: 8 * 1024 * 1024, files: 12 },
@@ -50,12 +51,14 @@ function requireAuth(req, res, next) {
     return res.status(403).json({ error: "Account disabled" });
   next();
 }
+
 function requireRole(...roles) {
   return (req, res, next) =>
     roles.includes(req.user.role)
       ? next()
       : res.status(403).json({ error: "Not permitted" });
 }
+
 router.use(requireAuth);
 
 // ---------------------------------------------------------------- scope
@@ -82,16 +85,19 @@ function scopeClause(user, alias = "e") {
     params,
   };
 }
+
 function canSeeExpense(user, exp) {
   const s = scopeOf(user);
   if (!s.all && !s.ids.includes(exp.project_id)) return false;
   if (user.role === "site" && exp.created_by !== user.id) return false;
   return true;
 }
+
 function inScope(user, projectId) {
   const s = scopeOf(user);
   return s.all || s.ids.includes(projectId);
 }
+
 // ---- query workflow access ----
 // "In the workflow" = has access to this voucher (project scope; site users only
 // their own vouchers). Everyone in the workflow can see + reply + attach on a query;
@@ -105,6 +111,7 @@ const QUERY_ROLES = [
   "account_checker",
   "admin",
 ];
+
 const RESOLVER_ROLES = [
   "checker",
   "purchase",
@@ -113,6 +120,7 @@ const RESOLVER_ROLES = [
   "account_checker",
   "admin",
 ];
+
 const inQueryWorkflow = (user, e) =>
   !!e && QUERY_ROLES.includes(user.role) && canSeeExpense(user, e);
 
@@ -131,6 +139,7 @@ async function nameMaps() {
     usr: Object.fromEntries(users.map((r) => [r.id, r.name])),
   };
 }
+
 const DAY_MS = 86400000;
 
 // P15/24/28/29 -- deadline for the voucher's current pending state (null if none)
@@ -336,12 +345,19 @@ async function buildPaymentZip(res, expenses) {
   await archive.finalize();
 }
 
-async function decorate(e, m) {
+async function decorate(e, m, includeAmountBreakdown = false) {
   const p = m.proj[e.project_id];
-  const [evCount, sla, previousDelays] = await Promise.all([
+  const [evCount, sla, previousDelays, amountBreakdown] = await Promise.all([
     db.prepare("SELECT COUNT(*) c FROM evidence WHERE expense_id=?").get(e.id),
     computeSla(e),
     getPreviousDelays(e),
+    includeAmountBreakdown
+      ? db
+          .prepare(
+            "SELECT gross_amount, gst_amount, total_amount FROM expense_amount_breakdowns WHERE expense_id=?",
+          )
+          .get(e.id)
+      : Promise.resolve(null),
   ]);
   const overallSla = computeOverallSla(e);
   return {
@@ -357,6 +373,13 @@ async function decorate(e, m) {
     sla,
     overallSla,
     previousDelays,
+    amountBreakdown: amountBreakdown
+      ? {
+          grossAmount: toRupees(amountBreakdown.gross_amount),
+          gstAmount: toRupees(amountBreakdown.gst_amount),
+          totalAmount: toRupees(amountBreakdown.total_amount),
+        }
+      : null,
   };
 }
 
@@ -380,6 +403,17 @@ const normBill = (s) =>
     .toLowerCase()
     .replace(/[\s\-/]/g, "")
     .replace(/^0+(?=\d)/, "");
+async function findBillNoDuplicate(billNo, excludeId = "") {
+  const normalized = normBill(billNo);
+  if (!normalized) return null;
+  const candidates = await db
+    .prepare(
+      `SELECT voucher_no, bill_no FROM expenses
+       WHERE status!='Rejected' AND id!=? AND bill_no IS NOT NULL AND bill_no!=''`,
+    )
+    .all(excludeId);
+  return candidates.find((candidate) => normBill(candidate.bill_no) === normalized) || null;
+}
 async function findDuplicate({
   projectId,
   date,
@@ -496,7 +530,14 @@ router.get("/expenses", async (req, res) => {
   const extra = filters.length ? " AND " + filters.join(" AND ") : "";
   const rows = await db
     .prepare(
-      `SELECT e.* FROM expenses e WHERE 1=1 ${sc.where} ${extra} ORDER BY e.created_at DESC`,
+      `SELECT e.*,
+        (SELECT fr.request_no
+         FROM fund_request_items fri
+         JOIN fund_requests fr ON fr.id = fri.fund_request_id
+         WHERE fri.expense_id = e.id
+         ORDER BY fr.created_at DESC
+         LIMIT 1) AS fr_no
+       FROM expenses e WHERE 1=1 ${sc.where} ${extra} ORDER BY e.created_at DESC`,
     )
     .all(...params);
   const expenses = await Promise.all(rows.map((r) => decorate(r, m)));
@@ -594,7 +635,7 @@ router.get("/expenses/:id", async (req, res) => {
       ).map((t) => ({ ...t, byName: m.usr[t.by_user] || "—" })),
     })),
   );
-  res.json({ ...(await decorate(e, m)), evidence, history, queries });
+  res.json({ ...(await decorate(e, m, true)), evidence, history, queries });
 });
 
 router.post(
@@ -603,10 +644,45 @@ router.post(
   requireRole("site", "checker", "admin"),
   async (req, res) => {
     const b = req.body;
-    if (!b.date || !b.amount || !b.details)
+    if (!b.date || !b.details)
       return res
         .status(400)
-        .json({ error: "Date, amount and details required" });
+        .json({ error: "Date and details required" });
+    const billNo = String(b.billNo || "").trim();
+    if (!billNo)
+      return res.status(400).json({ error: "Bill No. is required" });
+    const billReceived = String(b.billReceived || "No");
+    if (!["Yes with GST", "Yes", "No"].includes(billReceived))
+      return res.status(400).json({ error: "Choose a valid Bill Received option" });
+    let grossPaise = null;
+    let gstPaise = null;
+    let amountPaise = null;
+    if (billReceived === "Yes with GST") {
+      if (!String(b.grossAmount ?? "").trim() || !String(b.gstAmount ?? "").trim())
+        return res.status(400).json({ error: "Gross amount and GST amount are required" });
+      const gross = Number(b.grossAmount);
+      const gst = Number(b.gstAmount);
+      if (!Number.isFinite(gross) || gross <= 0 || !Number.isFinite(gst) || gst < 0)
+        return res.status(400).json({ error: "Enter a valid gross amount and GST amount" });
+      grossPaise = toPaise(gross);
+      gstPaise = toPaise(gst);
+      if (grossPaise <= 0)
+        return res.status(400).json({ error: "Gross amount must be at least ₹0.01" });
+      amountPaise = grossPaise + gstPaise;
+    } else {
+      if (!b.amount)
+        return res.status(400).json({ error: "Amount is required" });
+      amountPaise = toPaise(b.amount);
+    }
+    if (!Number.isFinite(amountPaise) || amountPaise <= 0)
+      return res.status(400).json({ error: "Enter a valid amount greater than zero" });
+    const existingBill = await findBillNoDuplicate(billNo);
+    if (existingBill)
+      return res.status(409).json({
+        error: `Bill No. "${billNo}" is already used on ${existingBill.voucher_no} and cannot be reused.`,
+        duplicateBill: true,
+        match: existingBill.voucher_no,
+      });
     if (!inScope(req.user, b.projectId))
       return res.status(403).json({ error: "Project not in your access" });
     const asDraft = b.asDraft === "true" || b.asDraft === true;
@@ -630,9 +706,9 @@ router.post(
       const dup = await findDuplicate({
         projectId: b.projectId,
         date: b.date,
-        amount: toPaise(b.amount),
+        amount: amountPaise,
         categoryId: b.categoryId,
-        billNo: b.billNo,
+        billNo,
       });
       if (dup)
         return res
@@ -655,8 +731,17 @@ router.post(
         : "{}";
     // voucher + evidence + history + audit succeed or roll back together
     let voucher;
+    let duplicateBill = null;
 
     await db.transaction(async () => {
+      // Serialize submissions with equivalent bill numbers so simultaneous requests
+      // cannot both pass the duplicate check before inserting.
+      await db
+        .prepare("SELECT pg_advisory_xact_lock(hashtext(?))")
+        .get(normBill(billNo));
+      duplicateBill = await findBillNoDuplicate(billNo);
+      if (duplicateBill) return;
+
       voucher = await nextVoucher();
 
       await db
@@ -670,14 +755,14 @@ router.post(
           id,
           voucher,
           b.date,
-          toPaise(b.amount),
+          amountPaise,
           b.categoryId || null,
           b.details,
           b.projectId,
           locationId,
           b.expenseDoneBy || req.user.name,
-          b.billReceived || "No",
-          b.billNo || null,
+          billReceived,
+          billNo,
           "Pending",
           b.remark || null,
           status,
@@ -688,6 +773,16 @@ router.post(
           asDraft ? null : now(),
           b.paid === "1" ? 1 : 0,
         );
+
+      if (grossPaise != null && gstPaise != null) {
+        await db
+          .prepare(
+            `INSERT INTO expense_amount_breakdowns
+             (expense_id, gross_amount, gst_amount, total_amount, created_at)
+             VALUES (?,?,?,?,?)`,
+          )
+          .run(id, grossPaise, gstPaise, amountPaise, now());
+      }
 
       for (const f of req.files || []) {
         await db
@@ -708,9 +803,15 @@ router.post(
         asDraft ? "Created draft" : "Submitted expense",
         "expense",
         voucher,
-        "₹" + b.amount,
+        "₹" + toRupees(amountPaise),
       );
     });
+    if (duplicateBill)
+      return res.status(409).json({
+        error: `Bill No. "${billNo}" is already used on ${duplicateBill.voucher_no} and cannot be reused.`,
+        duplicateBill: true,
+        match: duplicateBill.voucher_no,
+      });
     res.json({ id, voucherNo: voucher });
   },
 );
@@ -1963,10 +2064,27 @@ router.get(
       f.push("e.project_id = ?");
       params.push(req.query.projectId);
     }
+    if (String(req.query.frNo || "").trim()) {
+      f.push(`EXISTS (
+        SELECT 1
+        FROM fund_request_items fri
+        JOIN fund_requests fr ON fr.id = fri.fund_request_id
+        WHERE fri.expense_id = e.id
+          AND fr.request_no LIKE ?
+      )`);
+      params.push(`%${String(req.query.frNo).trim()}%`);
+    }
     const extra = f.length ? " AND " + f.join(" AND ") : "";
     const rows = await db
       .prepare(
-        `SELECT e.* FROM expenses e WHERE 1=1 ${sc.where} ${extra} ORDER BY e.date ASC`,
+        `SELECT e.*,
+          (SELECT fr.request_no
+           FROM fund_request_items fri
+           JOIN fund_requests fr ON fr.id = fri.fund_request_id
+           WHERE fri.expense_id = e.id
+           ORDER BY fr.created_at DESC
+           LIMIT 1) AS fr_no
+         FROM expenses e WHERE 1=1 ${sc.where} ${extra} ORDER BY e.date ASC`,
       )
       .all(...params);
     const cols = [
@@ -1980,6 +2098,7 @@ router.get(
       "Payment",
       "Amount",
       "Status",
+      "FR No",
       "Paid",
       "Paid On",
       "Created By",
@@ -2007,6 +2126,7 @@ router.get(
           e.payment_status || "",
           toRupees(e.amount),
           e.status,
+          e.fr_no || "",
           e.paid ? "Yes" : "No",
           dcell(e.paid_at),
           m.usr[e.created_by] || "",
@@ -2429,27 +2549,48 @@ router.get("/analytics", requireRole("accounts", "admin"), async (req, res) => {
     .prepare(`SELECT COALESCE(SUM(amount),0) v FROM expenses WHERE ${SPEND}`)
     .get();
   const total = toRupees(totalRow.v);
-  const approved = st("Approved");
+  const approved = ["Approved", "Payment Approved"].reduce(
+    (sum, status) => sum + st(status),
+    0,
+  );
   const paidRow = await db
-    .prepare("SELECT COALESCE(SUM(amount),0) v FROM expenses WHERE paid=1")
+    .prepare("SELECT COALESCE(SUM(amount),0) v FROM expenses WHERE status='Paid'")
     .get();
   const paid = toRupees(paidRow.v);
   const totals = {
     total,
     approved,
     paid,
-    pending: total - approved,
+    pending: total - approved - paid,
     rejected: st("Rejected"),
   };
-  const byMonth = (
-    await db
-      .prepare(
-        `SELECT substr(date,1,7) ym, SUM(amount) v FROM expenses WHERE ${SPEND} AND date IS NOT NULL GROUP BY ym ORDER BY ym DESC LIMIT 6`,
-      )
-      .all()
+  const todayUtc = new Date();
+  const monthKeys = Array.from({ length: 6 }, (_, index) =>
+    new Date(
+      Date.UTC(todayUtc.getUTCFullYear(), todayUtc.getUTCMonth() - 5 + index, 1),
+    )
+      .toISOString()
+      .slice(0, 7),
+  );
+  const nextMonthStart = new Date(
+    Date.UTC(todayUtc.getUTCFullYear(), todayUtc.getUTCMonth() + 1, 1),
   )
-    .reverse()
-    .map((r) => ({ month: r.ym, amount: toRupees(r.v) }));
+    .toISOString()
+    .slice(0, 10);
+  const byMonthRows = await db
+    .prepare(
+      `SELECT substr(date,1,7) ym, SUM(amount) v FROM expenses
+       WHERE ${SPEND} AND date >= ? AND date < ?
+       GROUP BY ym ORDER BY ym ASC`,
+    )
+    .all(monthKeys[0] + "-01", nextMonthStart);
+  const monthAmounts = Object.fromEntries(
+    byMonthRows.map((row) => [row.ym, toRupees(row.v)]),
+  );
+  const byMonth = monthKeys.map((month) => ({
+    month,
+    amount: monthAmounts[month] || 0,
+  }));
 
   // ---- money health ----
   const users = {};
@@ -2494,8 +2635,8 @@ router.get("/analytics", requireRole("accounts", "admin"), async (req, res) => {
       };
     })
     .sort((a, b) => b.allocated - a.allocated);
-  const monthsActive = Math.max(1, byMonth.length);
-  const avgMonthlyBurn = total / monthsActive;
+  const avgMonthlyBurn =
+    byMonth.reduce((sum, month) => sum + month.amount, 0) / byMonth.length;
   const burn = {
     released,
     spent: total,
@@ -2507,7 +2648,7 @@ router.get("/analytics", requireRole("accounts", "admin"), async (req, res) => {
   const unpaidRows = (
     await db
       .prepare(
-        "SELECT project_id, SUM(amount) v FROM expenses WHERE status='Approved' AND COALESCE(paid,0)=0 GROUP BY project_id ORDER BY v DESC",
+        "SELECT project_id, SUM(amount) v FROM expenses WHERE status IN ('Approved','Payment Approved') GROUP BY project_id ORDER BY v DESC",
       )
       .all()
   ).map((r) => ({ ...r, v: toRupees(r.v) }));
@@ -2526,7 +2667,6 @@ router.get("/analytics", requireRole("accounts", "admin"), async (req, res) => {
       .prepare(
         `SELECT project_id, SUM(amount) v FROM expenses
     WHERE ${SPEND}
-      AND category_id IN (SELECT id FROM categories WHERE LOWER(name) IN ('food','lpg','water'))
       AND substr(date,1,7)=? GROUP BY project_id`,
       )
       .all(curMonth)
@@ -2566,7 +2706,13 @@ router.get("/analytics", requireRole("accounts", "admin"), async (req, res) => {
     accounts: { t: 0, n: 0 },
     approved: { t: 0, n: 0 },
   };
-  const cleared = {};
+  const cleared = {
+    check: 0,
+    purchase: 0,
+    operations: 0,
+    accounts: 0,
+    approved: 0,
+  };
   rows.forEach((e) => {
     let ap = {};
     try {
@@ -2595,7 +2741,7 @@ router.get("/analytics", requireRole("accounts", "admin"), async (req, res) => {
       acc.approved.n++;
     }
     ["check", "purchase", "operations", "accounts", "approved"].forEach((k) => {
-      if (ap[k] && ap[k].by) cleared[ap[k].by] = (cleared[ap[k].by] || 0) + 1;
+      if (ap[k] && ap[k].by && ap[k].at) cleared[k]++;
     });
   });
   const stageLabel = {
@@ -2616,13 +2762,10 @@ router.get("/analytics", requireRole("accounts", "admin"), async (req, res) => {
     avgDays: acc[k].n ? +(acc[k].t / acc[k].n / DAY).toFixed(1) : 0,
     count: acc[k].n,
   }));
-  const throughput = Object.entries(cleared)
-    .map(([id, c]) => ({
-      name: (users[id] || {}).name || "—",
-      role: (users[id] || {}).role || "",
-      cleared: c,
-    }))
-    .sort((a, b) => b.cleared - a.cleared);
+  const throughput = Object.entries(stageLabel).map(([key, stage]) => ({
+    stage,
+    cleared: cleared[key],
+  }));
 
   // ---- SLA + aging (pending vouchers) ----
   const pendingStatuses = [

@@ -233,12 +233,45 @@ h3 {
 }
 
 .nav .group {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  border: 0;
+  padding: 7px 10px;
+  background: transparent;
+  text-align: left;
+  cursor: pointer;
   font-size: 10px;
   text-transform: uppercase;
   letter-spacing: .08em;
   color: #6b6f78;
-  margin: 14px 10px 6px;
+  margin: 14px 0 6px;
   font-weight: 600
+}
+
+.nav .group:hover {
+  color: #cdd0d6
+}
+
+.nav-group-items {
+  max-height: 1000px;
+  opacity: 1;
+  transition: max-height .18s ease, opacity .18s ease;
+}
+
+.nav-group.is-collapsed .nav-group-items {
+  max-height: 0;
+  opacity: 0;
+  overflow: hidden;
+}
+
+.group-chevron {
+  transition: transform .18s ease;
+}
+
+.nav-group.is-collapsed .group-chevron {
+  transform: rotate(-90deg)
 }
 
 .nav a {

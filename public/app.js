@@ -1,7 +1,9 @@
 "use strict";
 /* ============ helpers ============ */
 const $ = (s, el = document) => el.querySelector(s);
+
 const $$ = (s, el = document) => [...el.querySelectorAll(s)];
+
 const esc = (s) =>
   String(s == null ? "" : s).replace(
     /[&<>"']/g,
@@ -10,6 +12,7 @@ const esc = (s) =>
         c
       ],
   );
+
 const money = (n) =>
   "₹" + (Number(n) || 0).toLocaleString("en-IN", { maximumFractionDigits: 2 });
 
@@ -100,6 +103,7 @@ const fmtDate = (d) =>
         year: "numeric",
       })
     : "—";
+
 const fmtDT = (ts) => {
   const x = new Date(ts);
   return (
@@ -108,6 +112,7 @@ const fmtDT = (ts) => {
     x.toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit" })
   );
 };
+
 function toast(msg, type) {
   const t = $("#toast");
   t.className = "toast show " + (type || "");
@@ -125,6 +130,7 @@ const ROLES = {
   accounts: "Accounts Manager",
   account_checker: "Account Checker",
 };
+
 const PILL = {
   Draft: "p-draft",
   Submitted: "p-sub",
@@ -153,6 +159,7 @@ const S = {
   users: [],
   page: "dashboard",
 };
+
 const userName = (id) => (S.users.find((u) => u.id === id) || {}).name || "—";
 
 /* ============ api ============ */
@@ -184,6 +191,7 @@ function showLogin() {
   $("#login").classList.remove("hide");
   $("#app").classList.add("hide");
 }
+
 async function doLogin() {
   $("#lg-err").textContent = "";
   try {
@@ -196,6 +204,7 @@ async function doLogin() {
     $("#lg-err").textContent = e.message;
   }
 }
+
 async function logout() {
   try {
     await api("POST", "/logout");
@@ -287,6 +296,7 @@ function pendingForMe(list) {
       (e.status === "Query" && stages.includes(e.prev_status)),
   );
 }
+
 async function buildNav() {
   let pend = 0;
   if (can.reviewTab()) {
@@ -295,78 +305,79 @@ async function buildNav() {
     } catch (e) {}
   }
   const items = [];
-  if (!can.reviewOnly())
-    items.push(
-      { grp: "Overview" },
+  const addGroup = (label, links) => {
+    if (!links.length) return;
+    items.push({ grp: label }, ...links, { endGrp: true });
+  };
+
+  const overview = [];
+  if (!can.reviewOnly()) {
+    overview.push(
       { id: "dashboard", ic: "▦", label: "Dashboard" },
       { id: "expenses", ic: "☰", label: "All Expenses" },
     );
-  if (S.user.role === "site")
-    items.push({ id: "myQueries", ic: "?", label: "My Queries" });
-  if (can.reviewTab())
-    items.push({
-      id: "review",
-      ic: "✓",
-      label: "Review Queue",
-      badge: pend || "",
-    });
-
-  if (can.fundRequestsPurchase())
-    items.push({
-      id: "fundRequestsPurchase",
-      ic: "₹",
-      label: "Fund Requests",
-    });
-
-  if (can.fundsRelease())
-    items.push({
-      id: "fundsRelease",
-      ic: "₹",
-      label: "Funds Release",
-    });
-
-  if (can.allFundRequests())
-    items.push({
-      id: "allFundRequests",
-      ic: "₹",
-      label: "All Fund Requests",
-    });
-
-  if (can.funds())
-    items.push({ id: "funds", ic: "₹", label: "Funds & Balance" });
-  if (can.reports())
-    items.push(
-      { grp: "Reports" },
-      { id: "reports", ic: "⤓", label: "Reports & Export" },
-    );
-  if (can.payments())
-    items.push({ id: "payments", ic: "✔", label: "Approved Payments" });
-  if (can.downloadVouchers())
-    items.push({ id: "downloadVouchers", ic: "⇩", label: "Download Vouchers" });
-  if (can.fundRequests())
-    items.push({
-      id: "fundRequests",
-      ic: "₹",
-      label: "Fund Request",
-    });
-  if (can.analytics())
-    items.push({ id: "analytics", ic: "📊", label: "Analytics" });
-  if (can.admin() || can.audit() || S.user.role === "accounts") {
-    items.push({ grp: "Administration" });
-    if (S.user.role === "accounts")
-      items.push({ id: "accountCheckers", ic: "◎", label: "Account Checkers" });
-    if (can.admin())
-      items.push({ id: "users", ic: "◎", label: "Users & Access" });
-    if (can.admin()) items.push({ id: "masters", ic: "⚙", label: "Masters" });
-    if (can.audit()) items.push({ id: "audit", ic: "⌗", label: "Audit Trail" });
   }
-  $("#nav").innerHTML = items
-    .map((it) =>
-      it.grp
-        ? `<div class="group">${it.grp}</div>`
-        : `<a data-pg="${it.id}" onclick="go('${it.id}')"><span>${it.ic}</span><span>${it.label}</span>${it.badge ? `<span class="badge">${it.badge}</span>` : ""}</a>`,
-    )
-    .join("");
+  if (S.user.role === "site")
+    overview.push({ id: "myQueries", ic: "?", label: "My Queries" });
+  if (can.reviewTab())
+    overview.push({ id: "review", ic: "✓", label: "Review Queue", badge: pend || "" });
+  if (can.funds())
+    overview.push({ id: "funds", ic: "₹", label: "Funds & Balance" });
+  addGroup("Overview", overview);
+
+  const funds = [];
+  if (can.payments())
+    funds.push({ id: "payments", ic: "✔", label: "Approve Payments" });
+  if (can.allFundRequests())
+    funds.push({ id: "allFundRequests", ic: "₹", label: "All Fund Requests" });
+  if (can.fundRequests())
+    funds.push({ id: "fundRequests", ic: "₹", label: "Request Funds" });
+  if (can.fundsRelease())
+    funds.push({ id: "fundsRelease", ic: "₹", label: "Release Funds" });
+  if (can.fundRequestsPurchase())
+    funds.push({ id: "fundRequestsPurchase", ic: "▤", label: "Print Funds" });
+  addGroup("Funds", funds);
+
+  const reports = [];
+  if (can.reports() || can.downloadVouchers())
+    reports.push({ id: "reports", ic: "⇩", label: "Export Voucher" });
+  if (can.analytics())
+    reports.push({ id: "analytics", ic: "▥", label: "Analytics" });
+  addGroup("Reports", reports);
+
+  const administration = [];
+  if (can.admin())
+    administration.push({ id: "users", ic: "◎", label: "Users & Access" });
+  if (S.user.role === "accounts")
+    administration.push({ id: "accountCheckers", ic: "◎", label: "Account Checkers" });
+  if (can.admin())
+    administration.push({ id: "masters", ic: "⚙", label: "Masters" });
+  if (can.audit())
+    administration.push({ id: "audit", ic: "⌗", label: "Audit Trail" });
+  addGroup("Administration", administration);
+  let navHtml = "";
+  let groupOpen = false;
+  items.forEach((it) => {
+    if (it.endGrp) {
+      if (groupOpen) navHtml += "</div></section>";
+      groupOpen = false;
+      return;
+    }
+    if (it.grp) {
+      if (groupOpen) navHtml += "</div></section>";
+      const collapsed = localStorage.getItem(`nav-group-${it.grp}`) === "collapsed";
+      navHtml += `<section class="nav-group${collapsed ? " is-collapsed" : ""}" data-group="${esc(it.grp)}">
+        <button class="group" type="button" aria-expanded="${!collapsed}" onclick="toggleNavGroup('${esc(it.grp)}', this)">
+          <span>${esc(it.grp)}</span><span class="group-chevron" aria-hidden="true">⌄</span>
+        </button><div class="nav-group-items">`;
+      groupOpen = true;
+      return;
+    }
+    const link = `<a data-pg="${it.id}" onclick="go('${it.id}')"><span>${it.ic}</span><span>${it.label}</span>${it.badge ? `<span class="badge">${it.badge}</span>` : ""}</a>`;
+    navHtml += link;
+  });
+  if (groupOpen) navHtml += "</div></section>";
+  $("#nav").innerHTML = navHtml;
 
   const bn = [];
   if (!can.reviewOnly())
@@ -403,13 +414,21 @@ async function buildNav() {
     )
     .join("");
 }
+
+function toggleNavGroup(group, button) {
+  const section = button.closest(".nav-group");
+  const collapsed = section.classList.toggle("is-collapsed");
+  button.setAttribute("aria-expanded", String(!collapsed));
+  localStorage.setItem(`nav-group-${group}`, collapsed ? "collapsed" : "expanded");
+}
+
 const TITLES = {
   dashboard: ["Dashboard", "Overview of site expenses"],
   expenses: ["All Expenses", "Every recorded voucher"],
   myQueries: ["My Queries", "Active queries directed to you"],
   review: ["Review Queue", "Items awaiting your action"],
   funds: ["Funds & Balance", "Money given vs spent per project"],
-  reports: ["Reports & Export", "Filter and download CSV"],
+  reports: ["Export Voucher", "Export reports or download completed vouchers"],
   fundRequests: [
     "Fund Request",
     "Select Payment Approved vouchers and request funds",
@@ -439,6 +458,10 @@ const TITLES = {
 };
 
 async function go(pg) {
+  if (pg === "downloadVouchers") {
+    S.exportTab = "vouchers";
+    pg = "reports";
+  }
   if (
     can.reviewOnly() &&
     pg !== "review" &&
@@ -448,11 +471,24 @@ async function go(pg) {
   }
 
   S.page = pg;
+  const activeNavLink = $(`#nav a[data-pg="${pg}"]`);
+  const activeGroup = activeNavLink?.closest(".nav-group");
+  if (activeGroup?.classList.contains("is-collapsed")) {
+    activeGroup.classList.remove("is-collapsed");
+    activeGroup.querySelector(".group")?.setAttribute("aria-expanded", "true");
+    localStorage.setItem(`nav-group-${activeGroup.dataset.group}`, "expanded");
+  }
   $$("#nav a").forEach((a) =>
     a.classList.toggle("active", a.dataset.pg === pg),
   );
   $$("#botnav a").forEach((a) =>
-    a.classList.toggle("active", a.dataset.pg === pg),
+    a.classList.toggle(
+      "active",
+      a.dataset.pg === pg ||
+        (pg === "reports" &&
+          S.exportTab === "vouchers" &&
+          a.dataset.pg === "downloadVouchers"),
+    ),
   );
   $("#side").classList.remove("open");
   $("#topActions").innerHTML = "";
@@ -805,12 +841,11 @@ Views.analytics = async function () {
       ),
     ) +
     card(
-      "Throughput per Approver",
-      "Approval actions cleared",
+      "Throughput by Review Stage",
+      "Vouchers advanced at each stage, including actions completed by an admin",
       barChart(
         d.throughput.map((x) => ({
-          label:
-            x.name + (x.role && ROLES[x.role] ? " · " + ROLES[x.role] : ""),
+          label: x.stage,
           value: x.cleared,
         })),
         { fmt: cnt },
@@ -883,7 +918,8 @@ Views.downloadVouchers = async function () {
     .map((status) => `<option value="${esc(status)}">${esc(status)}</option>`)
     .join("");
 
-  $("#content").innerHTML = `
+  const exportContent = $("#export-content") || $("#content");
+  exportContent.innerHTML = `
     <div class="card card-pad" style="margin-bottom:16px">
       <div class="toolbar">
         <input id="dv-q" placeholder="Search voucher / details…" oninput="Views._filterDownloadVouchers()">
@@ -891,12 +927,13 @@ Views.downloadVouchers = async function () {
         <select id="dv-status" onchange="Views._filterDownloadVouchers()"><option value="">All completed statuses</option>${statusOptions}</select>
         <input id="dv-from" type="date" title="From date" onchange="Views._filterDownloadVouchers()">
         <input id="dv-to" type="date" title="To date" onchange="Views._filterDownloadVouchers()">
+        <input id="dv-fr-no" type="search" placeholder="FR No." aria-label="Filter by fund request number" oninput="Views._filterDownloadVouchers()">
         <button class="btn btn-primary" onclick="Views._downloadSelectedVouchers()">Download Selected</button>
       </div>
       <div id="dv-count" class="csub" style="margin:0 0 12px"></div>
       <div class="table-wrap">
         <table>
-          <thead><tr><th><input type="checkbox" onclick="Views._toggleAllDownloadVouchers(this)"></th><th>Voucher</th><th>Date</th><th>Details</th><th>Project</th><th class="num">Amount</th><th>Status</th><th></th></tr></thead>
+          <thead><tr><th><input type="checkbox" onclick="Views._toggleAllDownloadVouchers(this)"></th><th>Voucher</th><th>Date</th><th>Details</th><th>Project</th><th class="num">Amount</th><th>Status</th><th>FR No.</th><th></th></tr></thead>
           <tbody id="dv-body"></tbody>
         </table>
       </div>
@@ -912,6 +949,7 @@ Views._filterDownloadVouchers = function () {
   const status = $("#dv-status")?.value || "";
   const from = $("#dv-from")?.value || "";
   const to = $("#dv-to")?.value || "";
+  const frNo = ($("#dv-fr-no")?.value || "").trim().toLowerCase();
 
   if (q) {
     rows = rows.filter((e) =>
@@ -924,6 +962,8 @@ Views._filterDownloadVouchers = function () {
   if (status) rows = rows.filter((e) => e.status === status);
   if (from) rows = rows.filter((e) => String(e.date || "") >= from);
   if (to) rows = rows.filter((e) => String(e.date || "") <= to);
+  if (frNo)
+    rows = rows.filter((e) => String(e.fr_no || "").toLowerCase().includes(frNo));
 
   const total = rows.reduce((sum, e) => sum + (+e.amount || 0), 0);
   $("#dv-count").textContent = `${rows.length} voucher(s) · ${money(total)}`;
@@ -938,11 +978,12 @@ Views._filterDownloadVouchers = function () {
         <td>${esc(e.projectCode || "—")}</td>
         <td class="num">${money(e.amount)}</td>
         <td>${pill(e.status)}</td>
+        <td class="mono">${esc(e.fr_no || "—")}</td>
         <td><button class="btn btn-ghost btn-sm" onclick="Detail.open('${e.id}')">View</button></td>
       </tr>`,
       )
       .join("") ||
-    '<tr><td colspan="8"><div class="empty">No completed vouchers match these filters.</div></td></tr>';
+    '<tr><td colspan="9"><div class="empty">No completed vouchers match these filters.</div></td></tr>';
 };
 
 Views._toggleAllDownloadVouchers = function (master) {
@@ -1975,7 +2016,7 @@ Views._printFundRequest = async function (id) {
                 </td>
 
                 <td>
-                  ${["yes", "true", "1"].includes(String(e.bill_received || "").toLowerCase()) ? "Yes" : "No"}
+                  ${String(e.bill_received || "No").toLowerCase() === "yes with gst" ? "GST" : ["yes", "true", "1"].includes(String(e.bill_received || "").toLowerCase()) ? "Yes" : "No"}
                 </td>
 
                 <td class="num">
@@ -3648,6 +3689,7 @@ Views._toggleAllPay = function (master) {
     cb.checked = master.checked;
   });
 };
+
 Views._confirmPay = async function () {
   const ids = $$(".pay-cb")
     .filter((cb) => cb.checked)
@@ -3707,6 +3749,7 @@ Views.expenses = async function () {
   Views._allExp = await api("GET", "/expenses");
   Views._filterExp();
 };
+
 Views._filterExp = function () {
   let rows = Views._allExp || [];
   const q = ($("#fx-q").value || "").toLowerCase(),
@@ -3764,9 +3807,11 @@ Views.review = async function () {
   }
   Views._showReviewTab(saved.tab === "queries" ? "queries" : "queue");
 };
+
 Views._reviewPreferencesKey = function () {
   return `sitexpense:review-queue:${S.user.id}`;
 };
+
 Views._loadReviewPreferences = function () {
   try {
     return JSON.parse(localStorage.getItem(Views._reviewPreferencesKey())) || {};
@@ -3774,6 +3819,7 @@ Views._loadReviewPreferences = function () {
     return {};
   }
 };
+
 Views._saveReviewPreferences = function () {
   if (S.user.role !== "purchase") return;
   try {
@@ -3790,6 +3836,7 @@ Views._saveReviewPreferences = function () {
     );
   } catch (e) {}
 };
+
 Views._showReviewTab = function (tab) {
   Views._reviewTab = tab;
   const queueButton = $("#review-tab-queue");
@@ -3804,6 +3851,7 @@ Views._showReviewTab = function (tab) {
   }
   Views._filterReviewQueue();
 };
+
 Views._filterReviewQueue = function () {
   let rows =
     Views._reviewTab === "queries"
@@ -3966,10 +4014,24 @@ Views.funds = async function () {
 };
 
 Views.reports = async function () {
-  const cats = S.categories,
-    prj = S.projects;
-  $("#content").innerHTML = `<div class="card card-pad">
-    <h3>Report Filters</h3><div class="csub">Filter the dataset, then download CSV</div>
+  $("#content").innerHTML = `<div class="toolbar export-tabs" role="tablist" aria-label="Voucher exports">
+      <button id="export-tab-report" class="btn btn-primary" role="tab" onclick="Views._setExportTab('report')">Export Report</button>
+      <button id="export-tab-vouchers" class="btn btn-ghost" role="tab" onclick="Views._setExportTab('vouchers')">Download Vouchers</button>
+    </div><div id="export-content"></div>`;
+  await Views._setExportTab(S.exportTab || "report");
+};
+
+Views._setExportTab = async function (tab) {
+  S.exportTab = tab === "vouchers" ? "vouchers" : "report";
+  $("#export-tab-report")?.classList.toggle("btn-primary", S.exportTab === "report");
+  $("#export-tab-report")?.classList.toggle("btn-ghost", S.exportTab !== "report");
+  $("#export-tab-vouchers")?.classList.toggle("btn-primary", S.exportTab === "vouchers");
+  $("#export-tab-vouchers")?.classList.toggle("btn-ghost", S.exportTab !== "vouchers");
+  if (S.exportTab === "vouchers") return Views.downloadVouchers();
+
+  const prj = S.projects;
+  $("#export-content").innerHTML = `<div class="card card-pad">
+    <h3>Export Report</h3><div class="csub">Filter the expense dataset, then download a CSV report</div>
     <div class="frow three" style="margin-top:6px">
       <div class="field"><label>From</label><input type="date" id="rp-from"></div>
       <div class="field"><label>To</label><input type="date" id="rp-to"></div>
@@ -3981,10 +4043,11 @@ Views.reports = async function () {
           "",
         )}<option value="__paid">Paid</option><option value="__unpaid">Approved (unpaid)</option></select></div>
     </div>
-    <div class="frow"><div class="field"><label>Project</label><select id="rp-prj"><option value="">All</option>${prj.map((p) => `<option value="${p.id}">${esc(p.code)} · ${esc(p.name)}</option>`).join("")}</select></div></div>
+    <div class="frow three"><div class="field"><label>Project</label><select id="rp-prj"><option value="">All</option>${prj.map((p) => `<option value="${p.id}">${esc(p.code)} · ${esc(p.name)}</option>`).join("")}</select></div><div class="field"><label>FR No.</label><input id="rp-fr-no" type="search" placeholder="Search fund request number"></div></div>
     <div style="margin-top:10px"><button class="btn btn-primary" onclick="Views._csv()">⤓ Download CSV</button></div>
   </div>`;
 };
+
 Views._csv = function () {
   const q = new URLSearchParams();
   ["from", "to", "status"].forEach((k) => {
@@ -3993,6 +4056,8 @@ Views._csv = function () {
   });
   const p = $("#rp-prj").value;
   if (p) q.set("projectId", p);
+  const frNo = $("#rp-fr-no").value.trim();
+  if (frNo) q.set("frNo", frNo);
   const a = document.createElement("a");
   a.href = "/api/reports/expenses.csv?" + q.toString();
   a.click();
@@ -4022,6 +4087,7 @@ Views.accountCheckers = async function () {
 Views.masters = async function () {
   return Views._master("categories");
 };
+
 Views._master = async function (which) {
   const d = await api("GET", "/masters"); // all rows, active + inactive
   Views._mastersData = d;
@@ -4134,6 +4200,8 @@ const ExpenseForm = {
     const values = {
       "ef-date": fields.date || new Date().toISOString().slice(0, 10),
       "ef-amt": fields.amount || "",
+      "ef-gross": fields.grossAmount || "",
+      "ef-gst": fields.gstAmount || "",
       "ef-cat": fields.categoryId || "",
       "ef-det": fields.details || "",
       "ef-prj": fields.projectId || "",
@@ -4150,6 +4218,8 @@ const ExpenseForm = {
       if (el) el.value = value;
     }
 
+    this._gstMode = false;
+    this.updateAmountMode();
     this.preview();
     return true;
   },
@@ -4211,8 +4281,13 @@ const ExpenseForm = {
       <div class="modal-body">
         <div class="frow three">
           <div class="field"><label>Date *</label><input type="date" id="ef-date" value="${new Date().toISOString().slice(0, 10)}"${["site", "checker"].includes(S.user.role) ? ` min="${new Date(Date.now() - 7 * 86400000).toISOString().slice(0, 10)}"` : ""}></div>
-          <div class="field"><label>Amount (₹) *</label><input type="number" id="ef-amt" step="0.01" min="0" placeholder="0.00"></div>
+          <div class="field" id="ef-standard-amount"><label>Amount (₹) *</label><input type="number" id="ef-amt" step="0.01" min="0" placeholder="0.00"></div>
           <div class="field"><label>Category *</label><select id="ef-cat">${opt(cats, (x) => x.name)}</select></div>
+        </div>
+        <div class="frow three hide" id="ef-gst-breakdown">
+          <div class="field"><label>Gross Amount (₹) *</label><input type="number" id="ef-gross" step="0.01" min="0.01" required placeholder="0.00" oninput="ExpenseForm.updateGstTotal()"></div>
+          <div class="field"><label>GST (₹) *</label><input type="number" id="ef-gst" step="0.01" min="0" required placeholder="0.00" oninput="ExpenseForm.updateGstTotal()"></div>
+          <div class="field"><label>Total Amount (₹)</label><input type="number" id="ef-total" step="0.01" readonly placeholder="Calculated from gross + GST"></div>
         </div>
         <div class="field full"><label>Expense Details *</label><textarea id="ef-det" rows="2" placeholder="e.g. Diesel for Scorpio BR01PJ8719"></textarea></div>
         <div class="frow three">
@@ -4221,8 +4296,8 @@ const ExpenseForm = {
           <div class="field"><label>Done by</label><input id="ef-by" value="${esc(S.user.name)}"></div>
         </div>
         <div class="frow">
-          <div class="field"><label>Bill received?</label><select id="ef-billrec"><option>No</option><option>Yes</option></select></div>
-          <div class="field"><label>Bill No.</label><input id="ef-billno" placeholder="optional"></div>
+          <div class="field"><label>Bill Received? *</label><select id="ef-billrec" onchange="ExpenseForm.updateAmountMode()"><option>No</option><option>Yes</option><option>Yes with GST</option></select></div>
+          <div class="field"><label>Bill No. *</label><input id="ef-billno" required placeholder="Enter bill number"></div>
         </div>
         <div class="frow">
           <div class="field"><label>Payment</label><select id="ef-paid"><option value="0">Unpaid</option><option value="1">Paid</option></select></div>
@@ -4237,6 +4312,10 @@ const ExpenseForm = {
       <div class="modal-foot"><button class="btn btn-ghost" onclick="Modal.close()">Cancel</button>
         <button class="btn btn-ghost" onclick="ExpenseForm.saveDraft()">Save Draft</button>
         <button class="btn btn-primary" onclick="ExpenseForm.submit(false)">Submit for review</button></div>`);
+
+    this._gstMode = false;
+    this._nonGstAmount = "";
+    this.updateAmountMode();
 
     if (existingDraft && !this._startedNew) {
       await this.loadDraft();
@@ -4320,6 +4399,11 @@ const ExpenseForm = {
   },
 
   async saveDraft() {
+    if (!$("#ef-billno").value.trim()) {
+      toast("Bill No. is required", "err");
+      $("#ef-billno").focus();
+      return;
+    }
     const fields = {
       date: $("#ef-date").value,
       amount: $("#ef-amt").value,
@@ -4330,6 +4414,8 @@ const ExpenseForm = {
       expenseDoneBy: $("#ef-by").value,
       billReceived: $("#ef-billrec").value,
       billNo: $("#ef-billno").value,
+      grossAmount: $("#ef-gross").value,
+      gstAmount: $("#ef-gst").value,
       paid: $("#ef-paid").value,
       remark: $("#ef-rem").value,
     };
@@ -4358,6 +4444,8 @@ const ExpenseForm = {
       expenseDoneBy: "ef-by",
       billReceived: "ef-billrec",
       billNo: "ef-billno",
+      grossAmount: "ef-gross",
+      gstAmount: "ef-gst",
       paid: "ef-paid",
       remark: "ef-rem",
     };
@@ -4366,12 +4454,29 @@ const ExpenseForm = {
     if (confirmDuplicate) fd.append("confirmDuplicate", "true");
     const files = this.files;
     for (const f of files) fd.append("photos", f);
+    if (!$("#ef-date").value || !$("#ef-det").value.trim()) {
+      toast("Date and details required", "err");
+      return;
+    }
+    if (!$("#ef-billno").value.trim()) {
+      toast("Bill No. is required", "err");
+      $("#ef-billno").focus();
+      return;
+    }
     if (
-      !$("#ef-date").value ||
-      !$("#ef-amt").value ||
-      !$("#ef-det").value.trim()
+      $("#ef-billrec").value === "Yes with GST" &&
+      (!$("#ef-gross").value ||
+        !$("#ef-gst").value ||
+        !Number.isFinite(Number($("#ef-gross").value)) ||
+        !Number.isFinite(Number($("#ef-gst").value)) ||
+        Number($("#ef-gross").value) <= 0 ||
+        Number($("#ef-gst").value) < 0)
     ) {
-      toast("Date, amount and details required", "err");
+      toast("Enter a valid gross amount and GST amount", "err");
+      return;
+    }
+    if (!$("#ef-amt").value || !Number.isFinite(Number($("#ef-amt").value)) || Number($("#ef-amt").value) <= 0) {
+      toast("Enter a valid amount greater than zero", "err");
       return;
     }
     if (!asDraft && files.length === 0) {
@@ -4393,6 +4498,40 @@ const ExpenseForm = {
       } // P13
       toast(e.message, "err");
     }
+  },
+
+  updateAmountMode() {
+    const gstMode = $("#ef-billrec")?.value === "Yes with GST";
+    if (gstMode && !this._gstMode) this._nonGstAmount = $("#ef-amt")?.value || "";
+    if (!gstMode && this._gstMode && this._nonGstAmount !== undefined)
+      $("#ef-amt").value = this._nonGstAmount;
+    this._gstMode = gstMode;
+    $("#ef-standard-amount")?.classList.toggle("hide", gstMode);
+    $("#ef-gst-breakdown")?.classList.toggle("hide", !gstMode);
+    if (gstMode) this.updateGstTotal();
+  },
+
+  updateGstTotal() {
+    const grossInput = $("#ef-gross");
+    const gstInput = $("#ef-gst");
+    const totalInput = $("#ef-total");
+    const amountInput = $("#ef-amt");
+    if (!grossInput || !gstInput || !totalInput || !amountInput) return;
+    if (!grossInput.value || !gstInput.value) {
+      totalInput.value = "";
+      amountInput.value = "";
+      return;
+    }
+    const grossPaise = Math.round(Number(grossInput.value) * 100);
+    const gstPaise = Math.round(Number(gstInput.value) * 100);
+    if (!Number.isFinite(grossPaise) || !Number.isFinite(gstPaise)) {
+      totalInput.value = "";
+      amountInput.value = "";
+      return;
+    }
+    const total = ((grossPaise + gstPaise) / 100).toFixed(2);
+    totalInput.value = total;
+    amountInput.value = total;
   },
 };
 
@@ -4418,6 +4557,11 @@ const Detail = {
           )
           .join("")}</div>`
       : '<div class="csub" style="margin:0">No evidence attached.</div>';
+    const amountBreakdown = e.amountBreakdown
+      ? dl("Gross Amount", money(e.amountBreakdown.grossAmount)) +
+        dl("GST", money(e.amountBreakdown.gstAmount)) +
+        dl("Total Amount", money(e.amountBreakdown.totalAmount))
+      : "";
     const acts = Detail.actions(e);
     const tl = e.history
       .slice()
@@ -4432,7 +4576,7 @@ const Detail = {
       : '<div class="csub" style="margin:0">No queries raised.</div>';
     Modal.open(`<div class="modal-head"><h3>${esc(e.voucher_no)}</h3> ${pill(e.status)} ${previousDelayBadge(e)} ${overallSlaBadge(e)} ${slaBadge(e)}<button class="x" onclick="Modal.close()">×</button></div>
       <div class="modal-body">
-        <div class="detail-grid">${dl("Date", fmtDate(e.date))}${dl("Amount", `<b class="mono">${money(e.amount)}</b>`)}${dl("Category", `<span class="tag">${esc(e.categoryName)}</span>`)}${dl("Project", esc(e.projectName))}${dl("Location", esc(e.locationName))}${dl("Done by", esc(e.expense_done_by || "—"))}${dl("Bill", esc(e.bill_received || "—") + (e.bill_no ? ` (${esc(e.bill_no)})` : ""))}${dl("Payment", e.paid ? `Paid${e.paid_at ? " · " + fmtDate(Number(e.paid_at)) : ""}` : "Unpaid")}</div>
+        <div class="detail-grid">${dl("Date", fmtDate(e.date))}${dl("Amount", `<b class="mono">${money(e.amount)}</b>`)}${amountBreakdown}${dl("Category", `<span class="tag">${esc(e.categoryName)}</span>`)}${dl("Project", esc(e.projectName))}${dl("Location", esc(e.locationName))}${dl("Done by", esc(e.expense_done_by || "—"))}${dl("Bill", esc(e.bill_received || "—") + (e.bill_no ? ` (${esc(e.bill_no)})` : ""))}${dl("Payment", e.paid ? `Paid${e.paid_at ? " · " + fmtDate(Number(e.paid_at)) : ""}` : "Unpaid")}</div>
         <div class="dl" style="border:0">Details</div><div class="dv" style="border:0;padding-top:2px">${esc(e.details)}</div>
         ${e.remark ? `<div class="dl" style="border:0;margin-top:6px">Remark</div><div class="dv" style="border:0;padding-top:2px">${esc(e.remark)}</div>` : ""}
         <div class="section-t">Evidence</div>${ev}
@@ -4682,6 +4826,7 @@ const Detail = {
     document.querySelector("#modalRoot").appendChild(overlay);
   },
 };
+
 ExpenseForm._editNote = () =>
   toast("Editing is available on the desktop view in this build", "ok");
 
@@ -4823,6 +4968,7 @@ const FundsAdmin = {
     }
   },
 };
+
 const BudgetsAdmin = {
   set() {
     const curMonth = new Date().toISOString().slice(0, 7);
@@ -4850,6 +4996,7 @@ const BudgetsAdmin = {
     }
   },
 };
+
 const AccountCheckerAdmin = {
   edit(id) {
     const u = id
@@ -4999,6 +5146,7 @@ const UsersAdmin = {
     }
   },
 };
+
 const Masters = {
   add(type) {
     const isProj = type === "projects";
