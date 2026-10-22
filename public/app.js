@@ -928,6 +928,7 @@ Views.downloadVouchers = async function () {
         <input id="dv-from" type="date" title="From date" onchange="Views._filterDownloadVouchers()">
         <input id="dv-to" type="date" title="To date" onchange="Views._filterDownloadVouchers()">
         <input id="dv-fr-no" type="search" placeholder="FR No." aria-label="Filter by fund request number" oninput="Views._filterDownloadVouchers()">
+        <button class="btn btn-ghost" onclick="Views._csvDownloadVouchers()">Download Filtered CSV</button>
         <button class="btn btn-primary" onclick="Views._downloadSelectedVouchers()">Download Selected</button>
       </div>
       <div id="dv-count" class="csub" style="margin:0 0 12px"></div>
@@ -965,6 +966,7 @@ Views._filterDownloadVouchers = function () {
   if (frNo)
     rows = rows.filter((e) => String(e.fr_no || "").toLowerCase().includes(frNo));
 
+  Views._filteredDownloadVouchers = rows;
   const total = rows.reduce((sum, e) => sum + (+e.amount || 0), 0);
   $("#dv-count").textContent = `${rows.length} voucher(s) · ${money(total)}`;
   $("#dv-body").innerHTML =
@@ -984,6 +986,17 @@ Views._filterDownloadVouchers = function () {
       )
       .join("") ||
     '<tr><td colspan="9"><div class="empty">No completed vouchers match these filters.</div></td></tr>';
+};
+
+Views._csvDownloadVouchers = function () {
+  const ids = (Views._filteredDownloadVouchers || []).map((e) => e.id);
+  if (!ids.length) {
+    toast("No vouchers match the current filters", "err");
+    return;
+  }
+  const a = document.createElement("a");
+  a.href = "/api/reports/expenses.csv?ids=" + encodeURIComponent(ids.join(","));
+  a.click();
 };
 
 Views._toggleAllDownloadVouchers = function (master) {

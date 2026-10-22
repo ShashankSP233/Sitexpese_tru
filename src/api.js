@@ -2044,6 +2044,16 @@ router.get(
     const sc = scopeClause(req.user, "e");
     const params = [...sc.params];
     const f = [];
+    if (String(req.query.ids || "").trim()) {
+      const ids = String(req.query.ids)
+        .split(",")
+        .map((id) => id.trim())
+        .filter(Boolean);
+      if (ids.length) {
+        f.push(`e.id IN (${ids.map(() => "?").join(",")})`);
+        params.push(...ids);
+      }
+    }
     if (req.query.from) {
       f.push("e.date >= ?");
       params.push(req.query.from);
@@ -2078,13 +2088,17 @@ router.get(
     const rows = await db
       .prepare(
         `SELECT e.*,
+          ab.gross_amount AS gross_amount,
+          ab.gst_amount AS gst_amount,
           (SELECT fr.request_no
            FROM fund_request_items fri
            JOIN fund_requests fr ON fr.id = fri.fund_request_id
            WHERE fri.expense_id = e.id
            ORDER BY fr.created_at DESC
            LIMIT 1) AS fr_no
-         FROM expenses e WHERE 1=1 ${sc.where} ${extra} ORDER BY e.date ASC`,
+         FROM expenses e
+         LEFT JOIN expense_amount_breakdowns ab ON ab.expense_id=e.id
+         WHERE 1=1 ${sc.where} ${extra} ORDER BY e.date ASC`,
       )
       .all(...params);
     const cols = [
@@ -2096,7 +2110,9 @@ router.get(
       "Location",
       "Bill",
       "Payment",
-      "Amount",
+      "Gross Amount",
+      "GST Amount",
+      "Total Amount",
       "Status",
       "FR No",
       "Paid",
@@ -2124,6 +2140,8 @@ router.get(
           m.loc[e.location_id] || "",
           e.bill_received || "",
           e.payment_status || "",
+          e.gross_amount == null ? "" : toRupees(e.gross_amount),
+          e.gst_amount == null ? "" : toRupees(e.gst_amount),
           toRupees(e.amount),
           e.status,
           e.fr_no || "",
