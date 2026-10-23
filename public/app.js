@@ -4310,7 +4310,7 @@ const ExpenseForm = {
         </div>
         <div class="frow">
           <div class="field"><label>Bill Received? *</label><select id="ef-billrec" onchange="ExpenseForm.updateAmountMode()"><option>No</option><option>Yes</option><option>Yes with GST</option></select></div>
-          <div class="field"><label>Bill No. *</label><input id="ef-billno" required placeholder="Enter bill number"></div>
+          <div class="field"><label>Bill No./UPI UTR No. *</label><input id="ef-billno" required placeholder="Enter bill number/UPI UTR number"></div>
         </div>
         <div class="frow">
           <div class="field"><label>Payment</label><select id="ef-paid"><option value="0">Unpaid</option><option value="1">Paid</option></select></div>
