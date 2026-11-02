@@ -2774,7 +2774,7 @@ router.get("/analytics", requireRole("accounts", "admin"), async (req, res) => {
   // ---- workflow speed (iterate vouchers once) ----
   const rows = await db
     .prepare(
-      "SELECT id,status,amount,created_by,submitted_at,created_at,approvals,date FROM expenses",
+      "SELECT e.id,e.status,e.amount,e.created_by,e.submitted_at,e.created_at,e.approvals,e.date,u.role AS creator_role FROM expenses e LEFT JOIN users u ON u.id=e.created_by",
     )
     .all();
   const DAY = 86400000;
@@ -2803,7 +2803,12 @@ router.get("/analytics", requireRole("accounts", "admin"), async (req, res) => {
       const elapsed = Number(end) - Number(start);
       if (Number.isFinite(elapsed) && elapsed >= 0) durations[key].push(elapsed);
     };
-    if (at("check") && anchor) addDuration("check", anchor, at("check"));
+    // Checker-created vouchers start in Checked and are auto-approved during
+    // entry. Exclude those self-checks from the Checker turnaround metric.
+    const selfAutoChecked =
+      e.creator_role === "checker" && ap.check?.by === e.created_by;
+    if (at("check") && anchor && !selfAutoChecked)
+      addDuration("check", anchor, at("check"));
     if (at("purchase") && at("check")) addDuration("purchase", at("check"), at("purchase"));
     if (at("operations") && at("purchase")) addDuration("operations", at("purchase"), at("operations"));
     if (at("accounts") && at("operations")) addDuration("accounts", at("operations"), at("accounts"));
@@ -2838,7 +2843,7 @@ router.get("/analytics", requireRole("accounts", "admin"), async (req, res) => {
       stage: stageLabel[k],
       avgHours: n ? values.reduce((sum, value) => sum + value, 0) / n / 3600000 : null,
       medianHours: median == null ? null : median / 3600000,
-      count: n,
+      count: cleared[k],
     };
   });
   const throughput = Object.entries(stageLabel).map(([key, stage]) => ({

@@ -817,7 +817,7 @@ Views.analytics = async function (period) {
     `<h3 style="margin:22px 0 12px;color:var(--muted,#666)">Workflow speed</h3>` +
     card(
       "Time to Approve by Stage",
-      "Time from submission or the prior approval until this stage approves, including waiting and review time. All vouchers; counts include only valid timestamp pairs.",
+      "Time from submission or the prior approval until this stage approves, including waiting and review. Checker-created vouchers count as approvals, but are excluded from the Checker average and median.",
       `<div style="margin-bottom:18px">${barChart(
         d.turnaround.map((s) => ({
           label: s.stage,
@@ -825,7 +825,7 @@ Views.analytics = async function (period) {
           count: s.count,
         })),
         { fmt: formatElapsed, count: true },
-      )}</div><div class="table-wrap"><table><thead><tr><th>Approval stage</th><th class="num">Average time to approve</th><th class="num">Median time</th><th class="num">Completed vouchers</th></tr></thead><tbody>${d.turnaround
+      )}</div><div class="table-wrap"><table><thead><tr><th>Approval stage</th><th class="num">Average time to approve</th><th class="num">Median time</th><th class="num">Vouchers approved</th></tr></thead><tbody>${d.turnaround
         .map((s) => `<tr><td>${esc(s.stage)}</td><td class="num">${formatElapsed(s.avgHours)}</td><td class="num">${formatElapsed(s.medianHours)}</td><td class="num">${s.count}</td></tr>`)
         .join("")}</tbody></table></div>`,
     ) +
