@@ -724,8 +724,9 @@ function utilisationChart(rows) {
     "</div>"
   );
 }
-Views.analytics = async function () {
-  const d = await api("GET", "/analytics");
+Views.analytics = async function (period) {
+  const selectedMonth = period || new Date().toISOString().slice(0, 7);
+  const d = await api("GET", "/analytics?period=" + encodeURIComponent(selectedMonth));
   const t = d.totals,
     b = d.burn;
   const sva = [
@@ -745,12 +746,28 @@ Views.analytics = async function () {
     value: p.amount,
     count: p.count,
   }));
+  const locationRows = (d.byLocation || []).map((p) => ({
+    label: p.name,
+    value: p.amount,
+    count: p.count,
+  }));
   const monthRows = d.byMonth.map((mo) => ({
     label: fmtMonth(mo.month),
     value: mo.amount,
   }));
   const cnt = (v) => String(v);
   const num = (v) => (v == null ? "—" : (+v).toFixed(1));
+  const formatElapsed = (hours) => {
+    if (hours == null) return "—";
+    const minutes = Math.round(hours * 60);
+    if (minutes < 1) return "< 1 min";
+    const days = Math.floor(minutes / 1440);
+    const hrs = Math.floor((minutes % 1440) / 60);
+    const mins = minutes % 60;
+    if (days) return `${days}d ${hrs}h`;
+    if (hrs) return `${hrs}h ${mins}m`;
+    return `${mins}m`;
+  };
   const card = (title, sub, body) =>
     `<div class="card" style="margin-bottom:18px"><div class="card-pad" style="border-bottom:1px solid var(--line)"><h3>${title}</h3>${sub ? `<div class="csub" style="margin:0">${sub}</div>` : ""}</div><div style="padding:16px">${body}</div></div>`;
   $("#content").innerHTML =
@@ -765,11 +782,7 @@ Views.analytics = async function () {
       "Submitted vouchers (excludes drafts & rejected)",
       barChart(catRows, { count: true }),
     ) +
-    card(
-      "Spend by Site / Project",
-      "Submitted vouchers (excludes drafts & rejected)",
-      barChart(projRows, { count: true }),
-    ) +
+    `<div class="card" style="margin-bottom:18px"><div class="card-pad" style="display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;border-bottom:1px solid var(--line)"><div><h3>Spend Breakdown</h3><div class="csub" style="margin:0">Submitted vouchers (excludes drafts & rejected)</div></div><label>Break down by <select id="analytics-spend-group" onchange="Views._setSpendGroup()"><option value="project">Project</option><option value="location">Location</option></select></label></div><div id="analytics-spend-chart" style="padding:16px">${barChart(projRows, { count: true })}</div></div>` +
     card(
       "Monthly Spend",
       "Last 6 months, by expense date",
@@ -796,30 +809,25 @@ Views.analytics = async function () {
         })),
       ),
     ) +
-    `<div class="card" style="margin-bottom:18px"><div class="card-pad" style="display:flex;align-items:center;border-bottom:1px solid var(--line)"><div><h3>Budget vs Actual — ${fmtMonth(new Date().toISOString().slice(0, 7))}</h3><div class="csub" style="margin:0">Incurred spend within this month's budget (red bar = over budget)</div></div><button class="btn btn-primary btn-sm" style="margin-left:auto" onclick="BudgetsAdmin.set()">+ Set Budget</button></div><div style="padding:16px">${
+    `<div class="card" style="margin-bottom:18px"><div class="card-pad" style="display:flex;align-items:center;gap:12px;flex-wrap:wrap;border-bottom:1px solid var(--line)"><div><h3>Budget vs Actual — ${fmtMonth(selectedMonth)}</h3><div class="csub" style="margin:0">Incurred spend within the selected month's budget (red bar = over budget)</div></div><label style="margin-left:auto">Month <input type="month" value="${esc(selectedMonth)}" onchange="Views.analytics(this.value)"></label><button class="btn btn-primary btn-sm" onclick="BudgetsAdmin.set()">+ Set Budget</button></div><div style="padding:16px" id="budget-actual-content">${
       d.budgetVsActual.length
-        ? utilisationChart(
-            d.budgetVsActual.map((x) => ({
-              name: (x.code ? x.code + " · " : "") + x.name,
-              allocated: x.budget,
-              spent: x.incurred,
-              balance: x.variance,
-            })),
-          )
+        ? `<div style="display:flex;justify-content:flex-end;margin-bottom:14px"><label>Project <select id="budget-project" onchange="Views._filterBudgetActualProject()"><option value="">All budgeted projects</option>${d.budgetVsActual.map((x) => `<option value="${esc(x.projectId)}">${esc((x.code ? x.code + " · " : "") + x.name)}</option>`).join("")}</select></label></div><div id="budget-actual-chart"></div><div style="border-top:1px solid var(--line);margin-top:18px;padding-top:16px"><div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap;margin-bottom:12px"><div><b>Spend by category</b><div class="csub" style="margin:2px 0 0">Food, Water and LPG expenses for the selected projects</div></div><label style="margin-left:auto">Show <select id="budget-category" onchange="Views._renderBudgetCategorySpend()"><option value="all">Food, Water and LPG</option><option value="food">Food</option><option value="water">Water</option><option value="lpg">LPG</option></select></label></div><div id="budget-category-chart"></div><div class="table-wrap" style="margin-top:14px"><table><thead><tr><th>Project</th><th class="num">Food</th><th class="num">Water</th><th class="num">LPG</th><th class="num">Tracked categories total</th></tr></thead><tbody id="budget-category-rows"></tbody></table></div><div style="border-top:1px solid var(--line);margin-top:18px;padding-top:16px"><b id="budget-location-title">Spend by location</b><div class="csub" style="margin:2px 0 12px">Actual spend by voucher location for the selected project</div><div id="budget-location-chart"></div></div></div>`
         : '<div class="empty">No budgets set for this month yet.</div>'
     }</div></div>` +
     `<h3 style="margin:22px 0 12px;color:var(--muted,#666)">Workflow speed</h3>` +
     card(
-      "Approval Turnaround by Stage",
-      "Average days at each step",
-      barChart(
+      "Time to Approve by Stage",
+      "Time from submission or the prior approval until this stage approves, including waiting and review time. All vouchers; counts include only valid timestamp pairs.",
+      `<div style="margin-bottom:18px">${barChart(
         d.turnaround.map((s) => ({
           label: s.stage,
-          value: s.avgDays,
+          value: s.avgHours || 0,
           count: s.count,
         })),
-        { fmt: (v) => v + " d", count: true },
-      ),
+        { fmt: formatElapsed, count: true },
+      )}</div><div class="table-wrap"><table><thead><tr><th>Approval stage</th><th class="num">Average time to approve</th><th class="num">Median time</th><th class="num">Completed vouchers</th></tr></thead><tbody>${d.turnaround
+        .map((s) => `<tr><td>${esc(s.stage)}</td><td class="num">${formatElapsed(s.avgHours)}</td><td class="num">${formatElapsed(s.medianHours)}</td><td class="num">${s.count}</td></tr>`)
+        .join("")}</tbody></table></div>`,
     ) +
     card(
       "SLA Status",
@@ -851,6 +859,71 @@ Views.analytics = async function () {
         { fmt: cnt },
       ),
     );
+  if (d.budgetVsActual.length) {
+    Views._budgetActualRows = d.budgetVsActual.map((x) => ({
+      projectId: x.projectId,
+      project: (x.code ? x.code + " · " : "") + x.name,
+      budget: +x.budget || 0,
+      actual: +x.incurred || 0,
+      variance: +x.variance || 0,
+      categorySpend: x.categorySpend || {},
+      locationSpend: x.locationSpend || [],
+    }));
+    Views._filterBudgetActualProject();
+  }
+  Views._spendProjectRows = projRows;
+  Views._spendLocationRows = locationRows;
+};
+Views._setSpendGroup = function () {
+  const rows = $("#analytics-spend-group")?.value === "location" ? Views._spendLocationRows : Views._spendProjectRows;
+  if ($("#analytics-spend-chart")) $("#analytics-spend-chart").innerHTML = barChart(rows || [], { count: true });
+};
+Views._filterBudgetActualProject = function () {
+  const allRows = Views._budgetActualRows || [];
+  const projectId = $("#budget-project")?.value || "";
+  const rows = projectId ? allRows.filter((row) => String(row.projectId) === String(projectId)) : allRows;
+  Views._budgetActualVisibleRows = rows;
+  const chart = $("#budget-actual-chart");
+  if (chart) chart.innerHTML = utilisationChart(rows.map((row) => ({ name: row.project, allocated: row.budget, spent: row.actual, balance: row.variance })));
+  Views._renderBudgetCategorySpend();
+};
+Views._renderBudgetCategorySpend = function () {
+  const rows = Views._budgetActualVisibleRows || Views._budgetActualRows || [];
+  const selectedProject = $("#budget-project")?.value || "";
+  const selected = $("#budget-category")?.value || "all";
+  const amount = (row, key) => Number(row.categorySpend?.[key]?.amount || 0);
+  const count = (row, key) => Number(row.categorySpend?.[key]?.count || 0);
+  const categories = ["food", "water", "lpg"];
+  const labels = { food: "Food", water: "Water", lpg: "LPG" };
+  const chartRows = selected === "all"
+    ? categories.map((key) => ({
+        label: labels[key],
+        value: rows.reduce((sum, row) => sum + amount(row, key), 0),
+        count: rows.reduce((sum, row) => sum + count(row, key), 0),
+      }))
+    : rows.map((row) => ({
+        label: row.project,
+        value: amount(row, selected),
+        count: count(row, selected),
+      }));
+  const chart = $("#budget-category-chart");
+  if (chart) chart.innerHTML = barChart(chartRows, { count: true });
+  const body = $("#budget-category-rows");
+  if (body) body.innerHTML = rows.map((row) => {
+    const food = amount(row, "food"), water = amount(row, "water"), lpg = amount(row, "lpg");
+    return `<tr><td>${esc(row.project)}</td><td class="num">${money(food)}</td><td class="num">${money(water)}</td><td class="num">${money(lpg)}</td><td class="num">${money(food + water + lpg)}</td></tr>`;
+  }).join("") || '<tr><td colspan="5"><div class="empty">No category spend for these projects.</div></td></tr>';
+  const locationTotals = new Map();
+  rows.forEach((row) => row.locationSpend.forEach((location) => {
+    const item = locationTotals.get(location.name) || { label: location.name, value: 0, count: 0 };
+    item.value += Number(location.amount || 0);
+    item.count += Number(location.count || 0);
+    locationTotals.set(location.name, item);
+  }));
+  const locationTitle = $("#budget-location-title");
+  if (locationTitle) locationTitle.textContent = selectedProject && rows.length ? `Spend by location — ${rows[0].project}` : "Spend by location — all budgeted projects";
+  const locationChart = $("#budget-location-chart");
+  if (locationChart) locationChart.innerHTML = barChart([...locationTotals.values()], { count: true });
 };
 Views.payments = async function () {
   const ex = await api("GET", "/expenses");
@@ -1268,6 +1341,8 @@ Views.allFundRequests = async function () {
               ${esc(r.created_by_name || r.createdByName || "—")}
             </td>
 
+            <td>${esc(r.projectNames || "—")}</td>
+
             <td class="num">
               ${r.item_count || r.itemCount || 0}
             </td>
@@ -1294,7 +1369,7 @@ Views.allFundRequests = async function () {
       .join("") ||
     `
       <tr>
-        <td colspan="7">
+        <td colspan="8">
           <div class="empty">
             No fund requests found.
           </div>
@@ -1332,6 +1407,7 @@ Views.allFundRequests = async function () {
               <th>Request</th>
               <th>Created</th>
               <th>Created By</th>
+              <th>Project(s)</th>
               <th class="num">Vouchers</th>
               <th class="num">Total</th>
               <th>Status</th>
@@ -3988,7 +4064,7 @@ Views.funds = async function () {
     [...fundMovements.values()]
       .map(
         (f) =>
-          `<tr><td>${fmtDate(f.date)}</td><td>${esc(f.projectCode || "—")}</td><td>${f.requestNo ? `Fund Request ${esc(f.requestNo)} released` : f.kind === "allocation" ? "→ " + esc(f.toUserName || "site") : "Released"}</td><td class="num"><span class="tag" style="background:var(--green-soft);color:var(--green)">+ ${money(f.amount)}</span></td><td>${esc(f.addedByName || "—")}</td></tr>`,
+          `<tr><td>${fmtDate(f.date)}</td><td>${esc(f.projectCode || "—")}</td><td>${f.requestNo ? `Fund Request ${esc(f.requestNo)} released` : f.kind === "allocation" ? "→ " + esc(f.targetProjectName ? `${f.targetProjectName} site` : f.toUserName || "site") : "Released"}</td><td class="num"><span class="tag" style="background:var(--green-soft);color:var(--green)">+ ${money(f.amount)}</span></td><td>${esc(f.addedByName || "—")}</td></tr>`,
       )
       .join("") ||
     '<tr><td colspan="5"><div class="empty">No funds recorded yet</div></td></tr>';
@@ -4305,7 +4381,7 @@ const ExpenseForm = {
         <div class="field full"><label>Expense Details *</label><textarea id="ef-det" rows="2" placeholder="e.g. Diesel for Scorpio BR01PJ8719"></textarea></div>
         <div class="frow three">
           <div class="field"><label>Project *</label><select id="ef-prj">${opt(prj, (x) => x.code + " · " + x.name)}</select></div>
-          <div class="field"><label>Location</label><input id="ef-loc" list="ef-loc-list" placeholder="Type or pick a location" autocomplete="off"><datalist id="ef-loc-list">${loc.map((x) => `<option value="${esc(x.name)}"></option>`).join("")}</datalist></div>
+          <div class="field"><label>Location *</label><input id="ef-loc" list="ef-loc-list" required placeholder="Type or pick a location" autocomplete="off"><datalist id="ef-loc-list">${loc.map((x) => `<option value="${esc(x.name)}"></option>`).join("")}</datalist></div>
           <div class="field"><label>Done by</label><input id="ef-by" value="${esc(S.user.name)}"></div>
         </div>
         <div class="frow">
@@ -4412,6 +4488,11 @@ const ExpenseForm = {
   },
 
   async saveDraft() {
+    if (!$("#ef-loc").value.trim()) {
+      toast("Location is required", "err");
+      $("#ef-loc").focus();
+      return;
+    }
     if (!$("#ef-billno").value.trim()) {
       toast("Bill No. is required", "err");
       $("#ef-billno").focus();
@@ -4469,6 +4550,11 @@ const ExpenseForm = {
     for (const f of files) fd.append("photos", f);
     if (!$("#ef-date").value || !$("#ef-det").value.trim()) {
       toast("Date and details required", "err");
+      return;
+    }
+    if (!$("#ef-loc").value.trim()) {
+      toast("Location is required", "err");
+      $("#ef-loc").focus();
       return;
     }
     if (!$("#ef-billno").value.trim()) {

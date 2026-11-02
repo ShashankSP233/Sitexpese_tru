@@ -648,6 +648,8 @@ router.post(
       return res
         .status(400)
         .json({ error: "Date and details required" });
+    if (!String(b.location || "").trim() && !b.locationId)
+      return res.status(400).json({ error: "Location is required" });
     const billNo = String(b.billNo || "").trim();
     if (!billNo)
       return res.status(400).json({ error: "Bill No. is required" });
@@ -1353,12 +1355,23 @@ router.get("/funds", async (req, res) => {
   ).forEach((r) => (spentByUser[r.created_by] = toRupees(r.v)));
 
   const sum = (o) => Object.values(o).reduce((a, b) => a + (b || 0), 0);
+  const adminProjectId = Object.keys(m.proj).find((id) => m.proj[id].code === "ADMIN-FUND");
+  const releaseDestinations = new Map(
+    fundsRows
+      .filter((f) => f.kind === "injection" && f.project_id !== adminProjectId)
+      .map((f) => [`${f.created_at}:${f.amount}:${f.added_by}`, f.project_id]),
+  );
   const decoRows = fundsRows.map((f) => ({
     ...f,
     amount: toRupees(f.amount),
     projectCode: (m.proj[f.project_id] || {}).code,
+    projectName: (m.proj[f.project_id] || {}).name,
     addedByName: m.usr[f.added_by],
     toUserName: f.to_user ? m.usr[f.to_user] : null,
+    targetProjectName:
+      f.project_id === adminProjectId && f.kind === "allocation"
+        ? (m.proj[releaseDestinations.get(`${f.created_at}:${f.amount}:${f.added_by}`)] || {}).name || null
+        : null,
   }));
 
   // SITE -- sees only what the checker allocated to it, minus its own spend
@@ -2552,6 +2565,17 @@ router.get("/analytics", requireRole("accounts", "admin"), async (req, res) => {
     amount: toRupees(r.v),
     count: r.c,
   }));
+  const byLocation = (
+    await db
+      .prepare(
+        `SELECT location_id, SUM(amount) v, COUNT(*) c FROM expenses WHERE ${SPEND} GROUP BY location_id ORDER BY v DESC`,
+      )
+      .all()
+  ).map((r) => ({
+    name: m.loc[r.location_id] || "No location",
+    amount: toRupees(r.v),
+    count: r.c,
+  }));
   const byStatus = (
     await db
       .prepare(
@@ -2678,7 +2702,11 @@ router.get("/analytics", requireRole("accounts", "admin"), async (req, res) => {
   const unpaidTotal = unpaidRows.reduce((a, b) => a + b.v, 0);
 
   // ---- budget vs actual, current month (#9) ----
-  const curMonth = new Date().toISOString().slice(0, 7);
+  const currentMonth = new Date().toISOString().slice(0, 7);
+  const requestedMonth = String(req.query.period || currentMonth);
+  const curMonth = /^\d{4}-(0[1-9]|1[0-2])$/.test(requestedMonth)
+    ? requestedMonth
+    : currentMonth;
   const spendThisMonth = {};
   (
     await db
@@ -2689,6 +2717,36 @@ router.get("/analytics", requireRole("accounts", "admin"), async (req, res) => {
       )
       .all(curMonth)
   ).forEach((r) => (spendThisMonth[r.project_id] = toRupees(r.v)));
+  const categorySpendByProject = {};
+  (
+    await db
+      .prepare(
+        `SELECT e.project_id, LOWER(TRIM(c.name)) category, SUM(e.amount) v, COUNT(*) c FROM expenses e LEFT JOIN categories c ON c.id=e.category_id WHERE ${SPEND} AND substr(e.date,1,7)=? GROUP BY e.project_id, LOWER(TRIM(c.name))`,
+      )
+      .all(curMonth)
+  ).forEach((r) => {
+    if (!["food", "water", "lpg"].includes(r.category)) return;
+    if (!categorySpendByProject[r.project_id]) categorySpendByProject[r.project_id] = {};
+    categorySpendByProject[r.project_id][r.category] = {
+      amount: toRupees(r.v),
+      count: Number(r.c || 0),
+    };
+  });
+  const locationSpendByProject = {};
+  (
+    await db
+      .prepare(
+        `SELECT e.project_id, e.location_id, SUM(e.amount) v, COUNT(*) c FROM expenses e WHERE ${SPEND} AND substr(e.date,1,7)=? GROUP BY e.project_id, e.location_id`,
+      )
+      .all(curMonth)
+  ).forEach((r) => {
+    if (!locationSpendByProject[r.project_id]) locationSpendByProject[r.project_id] = [];
+    locationSpendByProject[r.project_id].push({
+      name: m.loc[r.location_id] || "No location",
+      amount: toRupees(r.v),
+      count: Number(r.c || 0),
+    });
+  });
   const budgetVsActual = (
     await db
       .prepare(
@@ -2702,9 +2760,12 @@ router.get("/analytics", requireRole("accounts", "admin"), async (req, res) => {
     return {
       code: p.code || "—",
       name: p.name || "",
+      projectId: b.project_id,
       period: curMonth,
       budget: budgetRs,
       incurred,
+      categorySpend: categorySpendByProject[b.project_id] || {},
+      locationSpend: locationSpendByProject[b.project_id] || [],
       variance: budgetRs - incurred,
       pctUsed: budgetRs > 0 ? +((incurred / budgetRs) * 100).toFixed(1) : null,
     };
@@ -2717,12 +2778,12 @@ router.get("/analytics", requireRole("accounts", "admin"), async (req, res) => {
     )
     .all();
   const DAY = 86400000;
-  const acc = {
-    check: { t: 0, n: 0 },
-    purchase: { t: 0, n: 0 },
-    operations: { t: 0, n: 0 },
-    accounts: { t: 0, n: 0 },
-    approved: { t: 0, n: 0 },
+  const durations = {
+    check: [],
+    purchase: [],
+    operations: [],
+    accounts: [],
+    approved: [],
   };
   const cleared = {
     check: 0,
@@ -2738,36 +2799,25 @@ router.get("/analytics", requireRole("accounts", "admin"), async (req, res) => {
     } catch (x) {}
     const anchor = e.submitted_at || e.created_at,
       at = (k) => ap[k] && ap[k].at;
-    if (at("check") && anchor) {
-      acc.check.t += at("check") - anchor;
-      acc.check.n++;
-    }
-    if (at("purchase") && at("check")) {
-      acc.purchase.t += at("purchase") - at("check");
-      acc.purchase.n++;
-    }
-    if (at("operations") && at("purchase")) {
-      acc.operations.t += at("operations") - at("purchase");
-      acc.operations.n++;
-    }
-    if (at("accounts") && at("operations")) {
-      acc.accounts.t += at("accounts") - at("operations");
-      acc.accounts.n++;
-    }
-    if (at("approved") && at("accounts")) {
-      acc.approved.t += at("approved") - at("accounts");
-      acc.approved.n++;
-    }
+    const addDuration = (key, start, end) => {
+      const elapsed = Number(end) - Number(start);
+      if (Number.isFinite(elapsed) && elapsed >= 0) durations[key].push(elapsed);
+    };
+    if (at("check") && anchor) addDuration("check", anchor, at("check"));
+    if (at("purchase") && at("check")) addDuration("purchase", at("check"), at("purchase"));
+    if (at("operations") && at("purchase")) addDuration("operations", at("purchase"), at("operations"));
+    if (at("accounts") && at("operations")) addDuration("accounts", at("operations"), at("accounts"));
+    if (at("approved") && at("accounts")) addDuration("approved", at("accounts"), at("approved"));
     ["check", "purchase", "operations", "accounts", "approved"].forEach((k) => {
       if (ap[k] && ap[k].by && ap[k].at) cleared[k]++;
     });
   });
   const stageLabel = {
-    check: "Submit → Checked",
-    purchase: "Checked → Purchase",
-    operations: "Purchase → Operations",
-    accounts: "Operations → Accounts",
-    approved: "Accounts → Approved",
+    check: "Checker approval",
+    purchase: "Purchase approval",
+    operations: "Operations approval",
+    accounts: "Accounts review",
+    approved: "Accounts final approval",
   };
   const turnaround = [
     "check",
@@ -2775,11 +2825,22 @@ router.get("/analytics", requireRole("accounts", "admin"), async (req, res) => {
     "operations",
     "accounts",
     "approved",
-  ].map((k) => ({
-    stage: stageLabel[k],
-    avgDays: acc[k].n ? +(acc[k].t / acc[k].n / DAY).toFixed(1) : 0,
-    count: acc[k].n,
-  }));
+  ].map((k) => {
+    const values = durations[k].slice().sort((a, b) => a - b);
+    const n = values.length;
+    const middle = Math.floor(n / 2);
+    const median = n
+      ? n % 2
+        ? values[middle]
+        : (values[middle - 1] + values[middle]) / 2
+      : null;
+    return {
+      stage: stageLabel[k],
+      avgHours: n ? values.reduce((sum, value) => sum + value, 0) / n / 3600000 : null,
+      medianHours: median == null ? null : median / 3600000,
+      count: n,
+    };
+  });
   const throughput = Object.entries(stageLabel).map(([key, stage]) => ({
     stage,
     cleared: cleared[key],
@@ -2815,6 +2876,7 @@ router.get("/analytics", requireRole("accounts", "admin"), async (req, res) => {
   res.json({
     byCategory,
     byProject,
+    byLocation,
     byStatus,
     totals,
     byMonth,
@@ -2891,12 +2953,15 @@ router.get(
       SELECT
         fr.*,
         u.name AS created_by_name,
-        COUNT(fri.id) AS item_count
+        COUNT(fri.id) AS item_count,
+        STRING_AGG(DISTINCT COALESCE(p.code || ' · ', '') || p.name, ', ' ORDER BY COALESCE(p.code || ' · ', '') || p.name) AS project_names
       FROM fund_requests fr
       JOIN users u
         ON u.id = fr.created_by
       LEFT JOIN fund_request_items fri
         ON fri.fund_request_id = fr.id
+      LEFT JOIN expenses e ON e.id = fri.expense_id
+      LEFT JOIN projects p ON p.id = e.project_id
       GROUP BY fr.id, u.name
       ORDER BY fr.created_at DESC
     `,
@@ -2908,6 +2973,7 @@ router.get(
         ...r,
         total: toRupees(r.total_amount),
         itemCount: Number(r.item_count || 0),
+        projectNames: r.project_names || "—",
       })),
     );
   },
