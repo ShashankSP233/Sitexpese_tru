@@ -36,6 +36,8 @@ pool.on("error", (err) =>
 
 const uid = () => crypto.randomUUID();
 const now = () => Date.now();
+// Personal expense tracking starts at midnight IST on 3 November 2026.
+const PERSONAL_EXPENSE_TRACKING_START = Date.parse("2026-11-02T18:30:00.000Z");
 
 // Money is stored as BIGINT paise (Rs.1 = 100) everywhere in the database to
 // avoid floating-point rounding drift in sums/balances. The API boundary
@@ -213,10 +215,14 @@ CREATE TABLE IF NOT EXISTS funds (
   created_at BIGINT NOT NULL,
   kind TEXT NOT NULL DEFAULT 'injection',
   to_user TEXT,
+  target_project_id TEXT,
+  personal_amount BIGINT NOT NULL DEFAULT 0,
   FOREIGN KEY (project_id) REFERENCES projects(id) ON DELETE RESTRICT,
   FOREIGN KEY (added_by) REFERENCES users(id) ON DELETE RESTRICT,
   FOREIGN KEY (to_user) REFERENCES users(id) ON DELETE RESTRICT
 );
+ALTER TABLE funds ADD COLUMN IF NOT EXISTS target_project_id TEXT;
+ALTER TABLE funds ADD COLUMN IF NOT EXISTS personal_amount BIGINT NOT NULL DEFAULT 0;
 CREATE TABLE IF NOT EXISTS fund_requests (
   id TEXT PRIMARY KEY,
   request_no TEXT UNIQUE NOT NULL,
@@ -246,6 +252,31 @@ CREATE TABLE IF NOT EXISTS fund_request_items (
     ON DELETE RESTRICT,
   UNIQUE(fund_request_id, expense_id)
 );
+
+-- Marks project expenses initially paid out of pocket by an Admin.
+-- The amount and project stay authoritative on expenses; this table tracks
+-- reimbursement eligibility and whether that amount has been settled.
+CREATE TABLE IF NOT EXISTS admin_personal_expenses (
+  expense_id TEXT PRIMARY KEY,
+  project_id TEXT NOT NULL,
+  admin_user_id TEXT NOT NULL,
+  created_at BIGINT NOT NULL,
+  settled_at BIGINT,
+  reimbursed_amount BIGINT NOT NULL DEFAULT 0,
+  FOREIGN KEY (expense_id) REFERENCES expenses(id) ON DELETE CASCADE,
+  FOREIGN KEY (project_id) REFERENCES projects(id) ON DELETE RESTRICT,
+  FOREIGN KEY (admin_user_id) REFERENCES users(id) ON DELETE RESTRICT
+);
+CREATE INDEX IF NOT EXISTS idx_admin_personal_project
+  ON admin_personal_expenses(project_id, settled_at);
+ALTER TABLE admin_personal_expenses
+  ADD COLUMN IF NOT EXISTS reimbursed_amount BIGINT NOT NULL DEFAULT 0;
+UPDATE admin_personal_expenses ape
+SET reimbursed_amount = e.amount
+FROM expenses e
+WHERE e.id = ape.expense_id
+  AND ape.settled_at IS NOT NULL
+  AND ape.reimbursed_amount = 0;
 
 CREATE INDEX IF NOT EXISTS idx_fund_requests_status
   ON fund_requests(status);
@@ -318,6 +349,14 @@ CREATE INDEX IF NOT EXISTS idx_history_exp  ON expense_history(expense_id);
 CREATE INDEX IF NOT EXISTS idx_queries_exp  ON queries(expense_id);
 CREATE INDEX IF NOT EXISTS idx_budgets_proj ON project_budgets(project_id);
 `);
+
+  await db
+    .prepare(
+      `INSERT INTO schema_migrations (name, applied_at)
+       VALUES (?, ?)
+       ON CONFLICT (name) DO UPDATE SET applied_at = EXCLUDED.applied_at`,
+    )
+    .run("admin_personal_expense_tracking", PERSONAL_EXPENSE_TRACKING_START);
 }
 
 // ---------------------------------------------------------------- seed

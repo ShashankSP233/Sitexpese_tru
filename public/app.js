@@ -3987,6 +3987,14 @@ Views._filterReviewQueue = function () {
 Views.funds = async function () {
   const d = await api("GET", "/funds");
   const t = d.totals;
+  const isAdmin = d.role === "admin";
+  FundsAdmin._personalExpenses = d.adminPersonalExpenses || [];
+  FundsAdmin._personalSpendByProject = {};
+  FundsAdmin._personalExpenses.forEach((e) => {
+    FundsAdmin._personalSpendByProject[e.project_id] =
+      (FundsAdmin._personalSpendByProject[e.project_id] || 0) +
+      Math.max(0, e.amount - Number(e.reimbursedAmount || 0));
+  });
   if (d.role === "checker") {
     const balRows =
       d.balances
@@ -4004,30 +4012,26 @@ Views.funds = async function () {
         )
         .join("") ||
       '<tr><td colspan="4"><div class="empty">No allocations yet</div></td></tr>';
-    const fundList =
-      d.funds
-        .map(
-          (f) =>
-            `<tr><td>${fmtDate(f.date)}</td><td>${esc(f.projectCode || "—")}</td><td>${f.kind === "allocation" ? "→ " + esc(f.toUserName || "site") : "Received from Accounts"}</td><td class="num"><span class="tag" style="background:${f.kind === "allocation" ? "var(--line)" : "var(--green-soft)"};color:${f.kind === "allocation" ? "var(--ink)" : "var(--green)"}">${f.kind === "allocation" ? "− " : "+ "}${money(f.amount)}</span></td><td>${esc(f.note || "—")}</td></tr>`,
-        )
-        .join("") ||
-      '<tr><td colspan="5"><div class="empty">No fund movements yet</div></td></tr>';
     $("#content").innerHTML = `
       <div class="grid stat-row" style="margin-bottom:18px">
         <div class="stat green"><div class="lab">Received</div><div class="val">${money(t.received)}</div><div class="sub2">from accounts</div></div>
         <div class="stat accent"><div class="lab">Distributed</div><div class="val">${money(t.distributed)}</div><div class="sub2">to sites</div></div>
         <div class="stat blue"><div class="lab">Balance In Hand</div><div class="val" style="color:${t.balance >= 0 ? "var(--green)" : "var(--red)"}">${money(t.balance)}</div><div class="sub2">${money(t.spent)} own spend</div></div>
-        <div className="stat-card">
-            <div className="stat-label">ADMIN WALLET</div>
-            <div className="stat-value">
-              {money(data.adminFund?.available || 0)}
-            </div>
-            <div className="stat-sub">Available to release to projects</div>
-          </div>
-        </div>
+      </div>
       <div class="card" style="margin-bottom:18px"><div class="card-pad" style="display:flex;align-items:center;border-bottom:1px solid var(--line)"><div><h3>By Project</h3><div class="csub" style="margin:0">Received − Distributed = available to distribute</div></div><button class="btn btn-primary btn-sm" style="margin-left:auto" onclick="FundsAdmin.allocate()">+ Allocate to Site</button></div><div class="table-wrap"><table><thead><tr><th>Project</th><th class="num">Received</th><th class="num">Distributed</th><th class="num">Available</th></tr></thead><tbody>${balRows}</tbody></table></div></div>
       <div class="card" style="margin-bottom:18px"><div class="card-pad" style="border-bottom:1px solid var(--line)"><h3>Site Allocations</h3></div><div class="table-wrap"><table><thead><tr><th>Site</th><th class="num">Allocated</th><th class="num">Spent</th><th class="num">Balance</th></tr></thead><tbody>${siteRows}</tbody></table></div></div>
-      <div class="card"><div class="card-pad" style="border-bottom:1px solid var(--line)"><h3>Fund Movements</h3></div><div class="table-wrap"><table><thead><tr><th>Date</th><th>Project</th><th>Type</th><th class="num">Amount</th><th>Note</th></tr></thead><tbody>${fundList}</tbody></table></div></div>`;
+      <div class="card fund-movement-card"><div class="card-pad fund-movement-heading"><h3>Fund Movements</h3><div class="csub" style="margin:3px 0 0">Filter by date, project, type, or search</div></div><div class="movement-filters"><div class="movement-filter"><label for="fm-from">From date</label><input id="fm-from" type="date" onchange="FundsAdmin.filterMovements()"></div><div class="movement-filter"><label for="fm-to">To date</label><input id="fm-to" type="date" onchange="FundsAdmin.filterMovements()"></div><div class="movement-filter"><label for="fm-project">Project</label><select id="fm-project" onchange="FundsAdmin.filterMovements()"><option value="">All projects</option></select></div><div class="movement-filter"><label for="fm-type">Movement type</label><select id="fm-type" onchange="FundsAdmin.filterMovements()"><option value="">All types</option></select></div><div class="movement-filter"><label for="fm-search">Search</label><input id="fm-search" type="search" placeholder="Search movements" oninput="FundsAdmin.filterMovements()"></div></div><div class="table-wrap"><table><thead><tr><th>Date</th><th>Project</th><th>Type</th><th class="num">Amount</th><th>Note</th></tr></thead><tbody id="fund-movement-rows"></tbody></table></div><div class="card-pad movement-footer"><small id="fm-count" class="csub" style="margin:0"></small><button id="fm-load-more" class="btn btn-ghost btn-sm" onclick="FundsAdmin.loadMoreMovements()">Load more</button></div></div>`;
+    FundsAdmin.setupMovements(d.funds, "checker");
+    return;
+  }
+  if (d.role === "site") {
+    $("#content").innerHTML = `
+      <div class="grid stat-row" style="margin-bottom:18px">
+        <div class="stat green"><div class="lab">Received</div><div class="val">${money(t.received)}</div><div class="sub2">allocated to you</div></div>
+        <div class="stat accent"><div class="lab">Spent</div><div class="val">${money(t.spent)}</div><div class="sub2">your project vouchers</div></div>
+        <div class="stat blue"><div class="lab">Balance In Hand</div><div class="val" style="color:${t.balance >= 0 ? "var(--green)" : "var(--red)"}">${money(t.balance)}</div><div class="sub2">received minus spent</div></div>
+      </div>
+      <div class="card card-pad"><h3>Your Funds Balance</h3><div class="csub">This summary includes funds allocated to your account and your project expenses.</div></div>`;
     return;
   }
   // accounts / admin — project pool view
@@ -4036,10 +4040,10 @@ Views.funds = async function () {
       .filter((b) => b.code !== "ADMIN-FUND")
       .map(
         (b) =>
-          `<tr><td><b>${esc(b.code)}</b> · ${esc(b.name)}</td><td class="num mono">${money(b.given)}</td><td class="num mono">${money(b.spent)}</td><td class="num mono ${b.balance >= 0 ? "bal-pos" : "bal-neg"}">${money(b.balance)}</td></tr>`,
+          `<tr><td><b>${esc(b.code)}</b> · ${esc(b.name)}</td><td class="num mono">${money(b.given)}</td><td class="num mono">${money(b.spent)}</td>${isAdmin ? `<td class="num mono"><button class="btn btn-ghost btn-sm" onclick="FundsAdmin.showPersonal('${esc(b.projectId)}')">${money(FundsAdmin._personalSpendByProject?.[b.projectId] || 0)}</button></td>` : ""}<td class="num mono ${b.balance >= 0 ? "bal-pos" : "bal-neg"}">${money(b.balance)}</td></tr>`,
       )
       .join("") ||
-    '<tr><td colspan="4"><div class="empty">No projects in your access</div></td></tr>';
+    `<tr><td colspan="${isAdmin ? 5 : 4}"><div class="empty">No projects in your access</div></td></tr>`;
   const fundMovements = new Map();
   d.funds.forEach((f) => {
     const releasedRequest =
@@ -4060,17 +4064,62 @@ Views.funds = async function () {
       });
     }
   });
-  const fundList =
-    [...fundMovements.values()]
-      .map(
-        (f) =>
-          `<tr><td>${fmtDate(f.date)}</td><td>${esc(f.projectCode || "—")}</td><td>${f.requestNo ? `Fund Request ${esc(f.requestNo)} released` : f.kind === "allocation" ? "→ " + esc(f.targetProjectName ? `${f.targetProjectName} site` : f.toUserName || "site") : "Released"}</td><td class="num"><span class="tag" style="background:var(--green-soft);color:var(--green)">+ ${money(f.amount)}</span></td><td>${esc(f.addedByName || "—")}</td></tr>`,
-      )
-      .join("") ||
-    '<tr><td colspan="5"><div class="empty">No funds recorded yet</div></td></tr>';
+  const movementRows = [...fundMovements.values()];
+  const releaseGroups = new Map();
+  movementRows.forEach((f) => {
+    if (f.projectCode !== "ADMIN-FUND" || f.kind !== "allocation" || !f.targetProjectId) return;
+    const key = `${f.created_at}:${f.targetProjectId}:${f.added_by || ""}`;
+    const group = releaseGroups.get(key) || { rows: [], personal: 0, project: 0 };
+    group.rows.push(f);
+    const personalPart = Math.min(Number(f.amount || 0), Number(f.personalAmount || 0));
+    group.personal += personalPart;
+    group.project += Math.max(0, Number(f.amount || 0) - personalPart);
+    releaseGroups.set(key, group);
+  });
+  const splitReleaseByRowId = new Map();
+  const splitProjectCredits = new Map();
+  const splitProjectCreditIds = new Set();
+  releaseGroups.forEach((group) => {
+    if (group.personal <= 0 || group.project <= 0) return;
+    group.rows.forEach((row) => {
+      splitReleaseByRowId.set(row.id, group);
+    });
+    const parent = group.rows[0];
+    const key = `${parent.created_at}:${parent.added_by || ""}:${parent.targetProjectId}`;
+    const credit = movementRows.find((row) =>
+      row.kind === "injection" &&
+      row.project_id === parent.targetProjectId &&
+      row.created_at === parent.created_at &&
+      row.added_by === parent.added_by,
+    );
+    if (credit) {
+      splitProjectCredits.set(key, credit);
+      splitProjectCreditIds.add(credit.id);
+    }
+  });
+  const renderedReleaseGroups = new Set();
+  const expandedMovements = [];
+  movementRows.forEach((f) => {
+    if (f.kind === "injection" && splitProjectCreditIds.has(f.id)) return;
+    const group = splitReleaseByRowId.get(f.id);
+    if (!group) {
+      expandedMovements.push(f);
+      return;
+    }
+    const key = `${f.created_at}:${f.targetProjectId}:${f.added_by || ""}`;
+    if (renderedReleaseGroups.has(key)) return;
+    renderedReleaseGroups.add(key);
+    const parent = group.rows[0];
+    const creditKey = `${f.created_at}:${f.added_by || ""}:${f.targetProjectId}`;
+    const projectCredit = splitProjectCredits.get(creditKey);
+    if (projectCredit) expandedMovements.push(projectCredit);
+    expandedMovements.push({ ...parent, _releasePart: "Personal funds", amount: group.personal });
+    expandedMovements.push({ ...parent, _releaseSummary: true, amount: group.personal + group.project });
+  });
   FundsAdmin._adminFundBalance = d.adminFund ? d.adminFund.balance : 0;
+  FundsAdmin._personalDueByProject = d.personalDueByProject || {};
   $("#content").innerHTML = `
-        <div class="grid stat-row" style="margin-bottom:18px;grid-template-columns:repeat(4,1fr)">
+        <div class="grid stat-row" style="margin-bottom:18px;grid-template-columns:repeat(${isAdmin ? 4 : 3},1fr)">
       <div class="stat green">
         <div class="lab">Funds Released</div>
         <div class="val">${money(t.received)}</div>
@@ -4090,16 +4139,17 @@ Views.funds = async function () {
         </div>
       </div>
 
-      <div class="stat green">
+      ${isAdmin ? `<div class="stat green">
         <div class="lab">Admin Wallet</div>
         <div class="val" style="color:${FundsAdmin._adminFundBalance >= 0 ? "var(--green)" : "var(--red)"}">
           ${money(FundsAdmin._adminFundBalance)}
         </div>
         <div class="sub2">available to release</div>
-      </div>
+      </div>` : ""}
     </div>
-    <div class="card" style="margin-bottom:18px"><div class="card-pad" style="display:flex;align-items:center;border-bottom:1px solid var(--line)"><div><h3>Balance by Project</h3><div class="csub" style="margin:0">Released − Spent</div></div>${can.addFunds() && d.role === "admin" ? `<button class="btn btn-primary btn-sm" style="margin-left:auto" onclick="FundsAdmin.add()">+ Release Funds</button>` : ""}</div><div class="table-wrap"><table><thead><tr><th>Project</th><th class="num">Released</th><th class="num">Spent</th><th class="num">Balance</th></tr></thead><tbody>${balRows}</tbody></table></div></div>
-    <div class="card"><div class="card-pad" style="border-bottom:1px solid var(--line)"><h3>Fund Movements</h3></div><div class="table-wrap"><table><thead><tr><th>Date</th><th>Project</th><th>Type</th><th class="num">Amount</th><th>By</th></tr></thead><tbody>${fundList}</tbody></table></div></div>`;
+    <div class="card" style="margin-bottom:18px"><div class="card-pad" style="display:flex;align-items:center;border-bottom:1px solid var(--line)"><div><h3>Balance by Project</h3><div class="csub" style="margin:0">Project-account funds and total project spend${isAdmin ? ". Select your personal spend to view its vouchers." : ""}</div></div>${can.addFunds() && isAdmin ? `<button class="btn btn-primary btn-sm" style="margin-left:auto" onclick="FundsAdmin.add()">+ Release Funds</button>` : ""}</div><div class="table-wrap"><table><thead><tr><th>Project</th><th class="num">Released</th><th class="num">Total project spend</th>${isAdmin ? `<th class="num">Your personal spend</th>` : ""}<th class="num">Balance</th></tr></thead><tbody>${balRows}</tbody></table></div></div>
+    <div class="card fund-movement-card"><div class="card-pad fund-movement-heading"><h3>Fund Movements</h3><div class="csub" style="margin:3px 0 0">Filter by date, project, type, or search</div></div><div class="movement-filters"><div class="movement-filter"><label for="fm-from">From date</label><input id="fm-from" type="date" onchange="FundsAdmin.filterMovements()"></div><div class="movement-filter"><label for="fm-to">To date</label><input id="fm-to" type="date" onchange="FundsAdmin.filterMovements()"></div><div class="movement-filter"><label for="fm-project">Project</label><select id="fm-project" onchange="FundsAdmin.filterMovements()"><option value="">All projects</option></select></div><div class="movement-filter"><label for="fm-type">Movement type</label><select id="fm-type" onchange="FundsAdmin.filterMovements()"><option value="">All types</option></select></div><div class="movement-filter"><label for="fm-search">Search</label><input id="fm-search" type="search" placeholder="Search movements" oninput="FundsAdmin.filterMovements()"></div></div><div class="table-wrap"><table><thead><tr><th>Date</th><th>Project</th><th>Type</th><th class="num">Amount</th><th>By</th></tr></thead><tbody id="fund-movement-rows"></tbody></table></div><div class="card-pad movement-footer"><small id="fm-count" class="csub" style="margin:0"></small><button id="fm-load-more" class="btn btn-ghost btn-sm" onclick="FundsAdmin.loadMoreMovements()">Load more</button></div></div>`;
+  FundsAdmin.setupMovements(expandedMovements);
 };
 
 Views.reports = async function () {
@@ -4390,7 +4440,7 @@ const ExpenseForm = {
         </div>
         <div class="frow">
           <div class="field"><label>Payment</label><select id="ef-paid"><option value="0">Unpaid</option><option value="1">Paid</option></select></div>
-          <div class="field"></div>
+          ${S.user.role === "admin" ? `<div class="field"><label>Personal reimbursement</label><small>Automatically recorded when Done by is your Admin name.</small></div>` : `<div class="field"></div>`}
         </div>
         <div class="field full"><label>Remark</label><input id="ef-rem" placeholder="optional"></div>
         <div class="section-t">Evidence photos</div>
@@ -4931,6 +4981,117 @@ ExpenseForm._editNote = () =>
 
 /* ============ funds / users / masters admin ============ */
 const FundsAdmin = {
+  movementType(f) {
+    if (this._movementVariant === "checker")
+      return f.kind === "allocation" ? `→ ${f.toUserName || "site"}` : "Received from Accounts";
+    const adminRelease =
+      f.projectCode === "ADMIN-FUND" &&
+      f.kind === "allocation" &&
+      f.targetProjectName;
+    if (f._releaseSummary) return `→ ${f.targetProjectName || "Project"} site + personal`;
+    if (f._releasePart) return `↳ ${f._releasePart}`;
+    if (f.requestNo) return `Fund Request ${f.requestNo} released`;
+    if (adminRelease)
+      return Number(f.personalAmount || 0) > 0
+        ? "→ Personal funds"
+        : `→ ${f.targetProjectName} site`;
+    return f.kind === "allocation" ? `→ ${f.toUserName || "site"}` : "Released";
+  },
+  setupMovements(rows, variant = "admin") {
+    this._movementVariant = variant;
+    this._movementRows = rows || [];
+    this._movementLimit = 100;
+    const projects = new Map();
+    const types = new Set();
+    this._movementRows.forEach((f) => {
+      const id = f.targetProjectId || f.project_id;
+      const label = f.targetProjectName
+        ? `${f.targetProjectCode || "—"} · ${f.targetProjectName}`
+        : f.projectCode || "—";
+      if (id) projects.set(id, label);
+      types.add(this.movementType(f));
+    });
+    const projectSelect = $("#fm-project");
+    const typeSelect = $("#fm-type");
+    if (projectSelect)
+      projectSelect.innerHTML = `<option value="">All projects</option>${[...projects]
+        .sort((a, b) => a[1].localeCompare(b[1]))
+        .map(([id, label]) => `<option value="${esc(id)}">${esc(label)}</option>`)
+        .join("")}`;
+    if (typeSelect)
+      typeSelect.innerHTML = `<option value="">All types</option>${[...types]
+        .sort((a, b) => a.localeCompare(b))
+        .map((type) => `<option value="${esc(type)}">${esc(type)}</option>`)
+        .join("")}`;
+    this.filterMovements(false);
+  },
+  filterMovements(reset = true) {
+    if (reset) this._movementLimit = 100;
+    const from = $("#fm-from")?.value || "";
+    const to = $("#fm-to")?.value || "";
+    const projectId = $("#fm-project")?.value || "";
+    const type = $("#fm-type")?.value || "";
+    const search = ($( "#fm-search")?.value || "").trim().toLocaleLowerCase();
+    const rows = (this._movementRows || []).filter((f) => {
+      const project = f.targetProjectId || f.project_id || "";
+      const movementType = this.movementType(f);
+      if (from && f.date < from) return false;
+      if (to && f.date > to) return false;
+      if (projectId && project !== projectId) return false;
+      if (type && movementType !== type) return false;
+      if (
+        search &&
+        ![
+          f.projectCode,
+          f.projectName,
+          f.targetProjectCode,
+          f.targetProjectName,
+          movementType,
+          f.note,
+          f.addedByName,
+          f.amount,
+        ]
+          .join(" ")
+          .toLocaleLowerCase()
+          .includes(search)
+      ) return false;
+      return true;
+    });
+    const visible = rows.slice(0, this._movementLimit);
+    const body = $("#fund-movement-rows");
+    if (body && this._movementVariant === "checker")
+      body.innerHTML = visible.map((f) => {
+        const allocated = f.kind === "allocation";
+        return `<tr><td>${fmtDate(f.date)}</td><td>${esc(f.projectCode || "—")}</td><td>${esc(this.movementType(f))}</td><td class="num"><span class="tag" style="background:${allocated ? "var(--line)" : "var(--green-soft)"};color:${allocated ? "var(--ink)" : "var(--green)"}">${allocated ? "− " : "+ "}${money(f.amount)}</span></td><td>${esc(f.note || "—")}</td></tr>`;
+      }).join("") || '<tr><td colspan="5"><div class="empty">No fund movements match these filters</div></td></tr>';
+    else if (body)
+      body.innerHTML = visible.map((f) => {
+        const typeLabel = this.movementType(f);
+        return `<tr${f._releasePart ? ' class="release-detail"' : ""}><td>${fmtDate(f.date)}</td><td>${esc(f.projectCode || "—")}</td><td>${esc(typeLabel)}</td><td class="num"><span class="tag" style="background:var(--green-soft);color:var(--green)">+ ${money(f.amount)}</span></td><td>${esc(f.addedByName || "—")}</td></tr>`;
+      }).join("") || '<tr><td colspan="5"><div class="empty">No fund movements match these filters</div></td></tr>';
+    const count = $("#fm-count");
+    if (count) count.textContent = `Showing ${visible.length} of ${rows.length} movements`;
+    const loadMore = $("#fm-load-more");
+    if (loadMore) loadMore.style.display = visible.length < rows.length ? "" : "none";
+  },
+  loadMoreMovements() {
+    this._movementLimit = (this._movementLimit || 100) + 100;
+    this.filterMovements(false);
+  },
+  showPersonal(projectId) {
+    const project = S.projects.find((p) => p.id === projectId);
+    const rows = (this._personalExpenses || [])
+      .filter((e) => e.project_id === projectId)
+      .map(
+        (e) =>
+          `<tr><td>${esc(e.voucher_no)}</td><td>${fmtDate(e.date)}</td><td>${esc(e.details || "—")}</td><td class="num">${money(e.amount)}</td><td class="num">${money(e.reimbursedAmount || 0)}</td><td class="num">${money(Math.max(0, e.amount - Number(e.reimbursedAmount || 0)))}</td><td>${esc(e.status)}</td></tr>`,
+      )
+      .join("") ||
+      '<tr><td colspan="7"><div class="empty">No personal vouchers for this project</div></td></tr>';
+    Modal.open(
+      `<div class="modal-head"><h3>Your personal expenses · ${esc(project?.code || "Project")}</h3><button class="x" onclick="Modal.close()">×</button></div><div class="modal-body"><div class="table-wrap"><table><thead><tr><th>Voucher</th><th>Date</th><th>Details</th><th class="num">Amount</th><th class="num">Reimbursed</th><th class="num">Outstanding</th><th>Status</th></tr></thead><tbody>${rows}</tbody></table></div></div><div class="modal-foot"><button class="btn btn-primary" onclick="Modal.close()">Close</button></div>`,
+    );
+  },
   add() {
     Modal.open(
       `<div class="modal-head">
@@ -4954,7 +5115,7 @@ const FundsAdmin = {
         <div class="frow">
           <div class="field">
             <label>Project *</label>
-            <select id="fd-prj">
+            <select id="fd-prj" onchange="FundsAdmin.updateBreakdown()">
               ${S.projects
                 .filter((p) => p.code !== "ADMIN-FUND")
                 .map(
@@ -4985,8 +5146,15 @@ const FundsAdmin = {
             step="0.01"
             min="0"
             max="${FundsAdmin._adminFundBalance || 0}"
+            oninput="FundsAdmin.updateBreakdown()"
           >
         </div>
+
+        <div class="field full">
+          <label for="fd-pay-personal" style="display:flex;align-items:center;justify-content:flex-start;gap:8px;width:fit-content;cursor:pointer"><input type="checkbox" id="fd-pay-personal" style="width:auto;flex:0 0 auto;margin:0" onchange="FundsAdmin.updateBreakdown()"><span>Pay personal reimbursement from this release</span></label>
+        </div>
+
+        <div id="fd-breakdown" class="card" style="margin:0 0 16px;background:var(--blue-soft);border:0"></div>
 
         <div class="field full">
           <label>Note</label>
@@ -5003,6 +5171,23 @@ const FundsAdmin = {
         <button class="btn btn-primary" onclick="FundsAdmin.save()">Release Funds</button>
       </div>`,
     );
+    this.updateBreakdown();
+  },
+  updateBreakdown() {
+    const projectId = $("#fd-prj")?.value;
+    const total = Math.max(0, Number($("#fd-amt")?.value || 0));
+    const due = Number(this._personalDueByProject?.[projectId] || 0);
+    const checkbox = $("#fd-pay-personal");
+    if (checkbox) {
+      checkbox.disabled = due <= 0;
+      if (due <= 0) checkbox.checked = false;
+    }
+    const personal = checkbox?.checked ? Math.min(total, due) : 0;
+    const project = total - personal;
+    const remaining = Math.max(0, due - personal);
+    const target = $("#fd-breakdown");
+    if (target)
+      target.innerHTML = `<div class="card-pad"><div style="display:flex;justify-content:space-between;gap:12px"><span>Personal account payment required</span><b>${money(due)}</b></div><div style="display:flex;justify-content:space-between;gap:12px;margin-top:8px"><span>Pay to personal account</span><b>${money(personal)}</b></div><div style="display:flex;justify-content:space-between;gap:12px;margin-top:8px"><span>To project account</span><b>${money(project)}</b></div><div class="csub" style="margin:8px 0 0">Personal amount remaining after this release: ${money(remaining)} · Total release: ${money(total)}</div></div>`;
   },
   async save() {
     const body = {
@@ -5010,6 +5195,7 @@ const FundsAdmin = {
       date: $("#fd-date").value,
       amount: $("#fd-amt").value,
       note: $("#fd-note").value.trim(),
+      payPersonal: $("#fd-pay-personal").checked,
     };
 
     if (!body.projectId || !body.date || !body.amount) {
@@ -5030,10 +5216,13 @@ const FundsAdmin = {
     }
 
     try {
-      await api("POST", "/funds", body);
+      const result = await api("POST", "/funds", body);
 
       Modal.close();
-      toast("Funds released to project", "ok");
+      toast(
+        `Funds released · ${money(result.personalPaid || 0)} to personal account · ${money(result.projectAmount || 0)} to project`,
+        "ok",
+      );
       go("funds");
     } catch (e) {
       toast(e.message, "err");

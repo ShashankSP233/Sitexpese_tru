@@ -635,7 +635,12 @@ router.get("/expenses/:id", async (req, res) => {
       ).map((t) => ({ ...t, byName: m.usr[t.by_user] || "—" })),
     })),
   );
-  res.json({ ...(await decorate(e, m, true)), evidence, history, queries });
+  res.json({
+    ...(await decorate(e, m, true)),
+    evidence,
+    history,
+    queries,
+  });
 });
 
 router.post(
@@ -776,6 +781,22 @@ router.post(
           b.paid === "1" ? 1 : 0,
         );
 
+      const doneBy = String(b.expenseDoneBy || req.user.name || "")
+        .trim()
+        .toLocaleLowerCase();
+      const adminNames = [req.user.name, "admin", "administrator"].map(
+        (name) => String(name || "").trim().toLocaleLowerCase(),
+      );
+      if (req.user.role === "admin" && adminNames.includes(doneBy)) {
+        await db
+          .prepare(
+            `INSERT INTO admin_personal_expenses
+             (expense_id, project_id, admin_user_id, created_at)
+             VALUES (?,?,?,?)`,
+          )
+          .run(id, b.projectId, req.user.id, now());
+      }
+
       if (grossPaise != null && gstPaise != null) {
         await db
           .prepare(
@@ -872,6 +893,41 @@ router.patch("/expenses/:id", async (req, res) => {
       now(),
       e.id,
     );
+  if (req.user.role === "admin" && e.created_by === req.user.id) {
+    const trackingStart = await db
+      .prepare("SELECT applied_at FROM schema_migrations WHERE name=?")
+      .get("admin_personal_expense_tracking");
+    const doneBy = String(b.expenseDoneBy ?? e.expense_done_by ?? "")
+      .trim()
+      .toLocaleLowerCase();
+    const adminNames = [req.user.name, "admin", "administrator"].map(
+      (name) => String(name || "").trim().toLocaleLowerCase(),
+    );
+    const existingPersonal = await db
+      .prepare(
+        "SELECT settled_at FROM admin_personal_expenses WHERE expense_id=? AND admin_user_id=?",
+      )
+      .get(e.id, req.user.id);
+    if (
+      e.created_at >= Number(trackingStart?.applied_at || Number.MAX_SAFE_INTEGER) &&
+      adminNames.includes(doneBy) &&
+      !existingPersonal
+    ) {
+      await db
+        .prepare(
+          `INSERT INTO admin_personal_expenses
+           (expense_id, project_id, admin_user_id, created_at)
+           VALUES (?,?,?,?)`,
+        )
+        .run(e.id, e.project_id, req.user.id, now());
+    } else if (!adminNames.includes(doneBy) && existingPersonal && !existingPersonal.settled_at) {
+      await db
+        .prepare(
+          "DELETE FROM admin_personal_expenses WHERE expense_id=? AND admin_user_id=? AND settled_at IS NULL",
+        )
+        .run(e.id, req.user.id);
+    }
+  }
   await addHistory(
     e.id,
     req.user.id,
@@ -1285,7 +1341,7 @@ router.get("/funds", async (req, res) => {
         (r) => r.id,
       )
     : s.ids;
-  if (!["accounts", "admin"].includes(role)) {
+  if (role !== "admin") {
     const adminFundProject = await db
       .prepare(
         `
@@ -1315,7 +1371,8 @@ router.get("/funds", async (req, res) => {
     allocByProj = {},
     allocToUser = {},
     spentByProj = {},
-    spentByUser = {};
+    spentByUser = {},
+    personalReimbursedByProj = {};
   (
     await db
       .prepare(
@@ -1353,26 +1410,66 @@ router.get("/funds", async (req, res) => {
       )
       .all(...projFilter)
   ).forEach((r) => (spentByUser[r.created_by] = toRupees(r.v)));
+  (
+    await db
+      .prepare(
+        `SELECT project_id, SUM(reimbursed_amount) v
+         FROM admin_personal_expenses
+         WHERE project_id IN (${inq})
+         GROUP BY project_id`,
+      )
+      .all(...projFilter)
+  ).forEach((r) => (personalReimbursedByProj[r.project_id] = toRupees(r.v)));
 
   const sum = (o) => Object.values(o).reduce((a, b) => a + (b || 0), 0);
   const adminProjectId = Object.keys(m.proj).find((id) => m.proj[id].code === "ADMIN-FUND");
   const releaseDestinations = new Map(
     fundsRows
       .filter((f) => f.kind === "injection" && f.project_id !== adminProjectId)
-      .map((f) => [`${f.created_at}:${f.amount}:${f.added_by}`, f.project_id]),
+      .map((f) => [`${f.created_at}:${f.added_by}`, f.project_id]),
   );
-  const decoRows = fundsRows.map((f) => ({
-    ...f,
-    amount: toRupees(f.amount),
-    projectCode: (m.proj[f.project_id] || {}).code,
-    projectName: (m.proj[f.project_id] || {}).name,
-    addedByName: m.usr[f.added_by],
-    toUserName: f.to_user ? m.usr[f.to_user] : null,
-    targetProjectName:
+  const projectCreditsByRelease = new Map();
+  fundsRows
+    .filter((f) => f.kind === "injection" && f.project_id !== adminProjectId)
+    .forEach((f) => {
+      const key = `${f.created_at}:${f.added_by}:${f.project_id}`;
+      projectCreditsByRelease.set(key, (projectCreditsByRelease.get(key) || 0) + Number(f.amount || 0));
+    });
+  const decoRows = fundsRows.map((f) => {
+    const noteProjectId =
       f.project_id === adminProjectId && f.kind === "allocation"
-        ? (m.proj[releaseDestinations.get(`${f.created_at}:${f.amount}:${f.added_by}`)] || {}).name || null
-        : null,
-  }));
+        ? String(f.note || "").match(/^Released to project (.+)$/)?.[1] || null
+        : null;
+    const targetProjectId =
+      f.target_project_id ||
+      (f.project_id === adminProjectId && f.kind === "allocation"
+        ? releaseDestinations.get(`${f.created_at}:${f.added_by}`) || noteProjectId
+        : null);
+    const targetProject = targetProjectId ? m.proj[targetProjectId] || {} : {};
+    const rawPersonalAmount = Number(f.personal_amount || 0);
+    const projectCredit =
+      f.project_id === adminProjectId && f.kind === "allocation" && targetProjectId
+        ? projectCreditsByRelease.get(`${f.created_at}:${f.added_by}:${targetProjectId}`)
+        : null;
+    const personalAmount =
+      rawPersonalAmount > 0
+        ? rawPersonalAmount
+        : projectCredit != null && Number(f.amount || 0) > projectCredit
+          ? Number(f.amount || 0) - projectCredit
+          : 0;
+    return {
+      ...f,
+      amount: toRupees(f.amount),
+      personalAmount: toRupees(personalAmount),
+      projectCode: (m.proj[f.project_id] || {}).code,
+      projectName: (m.proj[f.project_id] || {}).name,
+      addedByName: m.usr[f.added_by],
+      toUserName: f.to_user ? m.usr[f.to_user] : null,
+      targetProjectId,
+      targetProjectCode: targetProject.code || null,
+      targetProjectName: targetProject.name || null,
+    };
+  });
 
   // SITE -- sees only what the checker allocated to it, minus its own spend
   if (role === "site") {
@@ -1437,10 +1534,10 @@ router.get("/funds", async (req, res) => {
     });
   }
 
-  // ACCOUNTS / ADMIN -- project pool: injected - all committed spend
+  // ACCOUNTS / ADMIN -- project pool: injected funds minus all project spend.
   const balances = projFilter.map((pid) => {
     const p = m.proj[pid] || {},
-      given = injByProj[pid] || 0,
+      given = (injByProj[pid] || 0) + (personalReimbursedByProj[pid] || 0),
       spent = spentByProj[pid] || 0;
     return {
       projectId: pid,
@@ -1463,16 +1560,61 @@ router.get("/funds", async (req, res) => {
   // ADMIN FUND -- separate wallet balance
   let adminFund = null;
 
-  const adminFundProject = await db
-    .prepare(
-      `
+  const adminFundProject =
+    role === "admin"
+      ? await db
+          .prepare(
+            `
     SELECT id
     FROM projects
     WHERE code = 'ADMIN-FUND'
     LIMIT 1
   `,
-    )
-    .get();
+          )
+          .get()
+      : null;
+
+  const trackingStartRow = await db
+    .prepare("SELECT applied_at FROM schema_migrations WHERE name=?")
+    .get("admin_personal_expense_tracking");
+  const trackingStart = Number(trackingStartRow?.applied_at || Number.MAX_SAFE_INTEGER);
+
+  const adminPersonalExpenses = (
+    await db
+      .prepare(
+        `SELECT e.id, e.voucher_no, e.project_id, e.date, e.details,
+                e.amount, e.status, ape.reimbursed_amount
+         FROM admin_personal_expenses ape
+         JOIN expenses e ON e.id = ape.expense_id
+         WHERE ape.admin_user_id = ?
+           AND e.created_at >= ?
+           AND e.status != 'Rejected'
+           AND ape.project_id IN (${inq})
+         ORDER BY e.date DESC, e.created_at DESC`,
+      )
+      .all(req.user.id, trackingStart, ...projFilter)
+  ).map((e) => ({
+    ...e,
+    amount: toRupees(e.amount),
+    reimbursedAmount: toRupees(e.reimbursed_amount),
+  }));
+
+  const personalDueByProject = {};
+  (
+    await db
+      .prepare(
+        `SELECT ape.project_id, SUM(GREATEST(0, e.amount - ape.reimbursed_amount)) amount
+         FROM admin_personal_expenses ape
+         JOIN expenses e ON e.id = ape.expense_id
+         WHERE ape.admin_user_id = ?
+           AND e.created_at >= ?
+           AND e.status != 'Rejected'
+           AND ape.project_id IN (${inq})
+           AND e.amount > ape.reimbursed_amount
+         GROUP BY ape.project_id`,
+      )
+      .all(req.user.id, trackingStart, ...projFilter)
+  ).forEach((r) => (personalDueByProject[r.project_id] = toRupees(r.amount)));
 
   if (adminFundProject) {
     const receivedRow = await db
@@ -1509,12 +1651,16 @@ router.get("/funds", async (req, res) => {
     totals,
     balances,
     funds: decoRows,
-    adminFund,
+    adminFund: role === "admin" ? adminFund : null,
+    personalDueByProject,
+    adminPersonalExpenses,
   });
 });
 
 router.post("/funds", requireRole("admin"), async (req, res) => {
   const { projectId, amount, date, note } = req.body;
+  const payPersonal =
+    req.body.payPersonal === true || req.body.payPersonal === "true";
 
   if (!projectId || !amount || !date) {
     return res.status(400).json({
@@ -1536,7 +1682,12 @@ router.post("/funds", requireRole("admin"), async (req, res) => {
     });
   }
 
-  await db.transaction(async () => {
+  const trackingStartRow = await db
+    .prepare("SELECT applied_at FROM schema_migrations WHERE name=?")
+    .get("admin_personal_expense_tracking");
+  const trackingStart = Number(trackingStartRow?.applied_at || Number.MAX_SAFE_INTEGER);
+
+  const releaseResult = await db.transaction(async () => {
     // ADMIN-FUND is the Admin wallet.
     const adminFund = await db
       .prepare(
@@ -1557,6 +1708,31 @@ router.post("/funds", requireRole("admin"), async (req, res) => {
     if (projectId === adminFund.id) {
       throw new Error("Cannot release funds to ADMIN-FUND");
     }
+
+    const personalRows = payPersonal
+      ? await db
+          .prepare(
+            `SELECT ape.expense_id, e.amount, ape.reimbursed_amount
+             FROM admin_personal_expenses ape
+             JOIN expenses e ON e.id = ape.expense_id
+             WHERE ape.project_id = ?
+               AND ape.admin_user_id = ?
+               AND e.created_at >= ?
+               AND e.status != 'Rejected'
+               AND e.amount > ape.reimbursed_amount
+             ORDER BY e.date ASC, e.created_at ASC
+             FOR UPDATE OF ape`,
+          )
+          .all(projectId, req.user.id, trackingStart)
+      : [];
+    const personalDue = personalRows.reduce(
+      (sum, row) => sum + Number(row.amount || 0) - Number(row.reimbursed_amount || 0),
+      0,
+    );
+    const personalPaise = payPersonal
+      ? Math.min(amountPaise, personalDue)
+      : 0;
+    const projectPaise = amountPaise - personalPaise;
 
     // Check current Admin wallet balance.
     const receivedRow = await db
@@ -1591,28 +1767,51 @@ router.post("/funds", requireRole("admin"), async (req, res) => {
 
     const createdAt = now();
 
-    // 1. Remove money from ADMIN-FUND.
-    await db
-      .prepare(
-        `
-      INSERT INTO funds
-        (id, project_id, amount, date, note, added_by, created_at, kind, to_user)
-      VALUES
-        (?,?,?,?,?,?,?,'allocation',NULL)
-    `,
-      )
-      .run(
-        uid(),
-        adminFund.id,
-        amountPaise,
-        date,
-        note || `Released to project ${projectId}`,
-        req.user.id,
-        createdAt,
-      );
+    // 1. Record the Admin-wallet outflow by destination so the ledger clearly
+    // distinguishes personal reimbursement from project funds.
+    if (personalPaise > 0) {
+      await db
+        .prepare(
+          `INSERT INTO funds
+           (id, project_id, amount, date, note, added_by, created_at, kind,
+            to_user, target_project_id, personal_amount)
+           VALUES (?,?,?,?,?,?,?,'allocation',NULL,?,?)`,
+        )
+        .run(
+          uid(),
+          adminFund.id,
+          personalPaise,
+          date,
+          note || `Personal reimbursement to Admin for ${projectId}`,
+          req.user.id,
+          createdAt,
+          projectId,
+          personalPaise,
+        );
+    }
+    if (projectPaise > 0) {
+      await db
+        .prepare(
+          `INSERT INTO funds
+           (id, project_id, amount, date, note, added_by, created_at, kind,
+            to_user, target_project_id, personal_amount)
+           VALUES (?,?,?,?,?,?,?,'allocation',NULL,?,0)`,
+        )
+        .run(
+          uid(),
+          adminFund.id,
+          projectPaise,
+          date,
+          note || `Released to project ${projectId}`,
+          req.user.id,
+          createdAt,
+          projectId,
+        );
+    }
 
-    // 2. Put the same money into the selected project.
-    await db
+    // 2. Credit the project share; the optional personal share is paid from
+    // the same Admin Fund release and reduces the Admin's outstanding amount.
+    if (projectPaise > 0) await db
       .prepare(
         `
       INSERT INTO funds
@@ -1624,23 +1823,56 @@ router.post("/funds", requireRole("admin"), async (req, res) => {
       .run(
         uid(),
         projectId,
-        amountPaise,
+        projectPaise,
         date,
         note || `Received from Admin Fund`,
         req.user.id,
         createdAt,
       );
 
+    let remainingPersonalPayment = personalPaise;
+    for (const row of personalRows) {
+      if (remainingPersonalPayment <= 0) break;
+      const outstanding = Math.max(
+        0,
+        Number(row.amount || 0) - Number(row.reimbursed_amount || 0),
+      );
+      const paidNow = Math.min(outstanding, remainingPersonalPayment);
+      const reimbursedAmount = Number(row.reimbursed_amount || 0) + paidNow;
+      if (reimbursedAmount >= Number(row.amount || 0)) {
+        await db
+          .prepare(
+            `UPDATE admin_personal_expenses
+             SET reimbursed_amount = ?, settled_at = ?
+             WHERE expense_id = ?`,
+          )
+          .run(reimbursedAmount, createdAt, row.expense_id);
+      } else {
+        await db
+          .prepare(
+            `UPDATE admin_personal_expenses
+             SET reimbursed_amount = ?, settled_at = NULL
+             WHERE expense_id = ?`,
+          )
+          .run(reimbursedAmount, row.expense_id);
+      }
+      remainingPersonalPayment -= paidNow;
+    }
+
     await logAudit(
       req.user,
       "Released funds to project",
       "funds",
       projectId,
-      `₹${amount} from ADMIN-FUND`,
+      `₹${amount} total · ₹${toRupees(personalPaise)} to Admin · ₹${toRupees(projectPaise)} to project account`,
     );
+    return {
+      personalPaid: toRupees(personalPaise),
+      projectAmount: toRupees(projectPaise),
+    };
   });
 
-  res.json({ ok: true });
+  res.json({ ok: true, ...releaseResult });
 });
 
 // Item 5 -- checker (custodian) allocates a slice of the project pool to a site (internal transfer)
@@ -2711,9 +2943,22 @@ router.get("/analytics", requireRole("accounts", "admin"), async (req, res) => {
   (
     await db
       .prepare(
-        `SELECT project_id, SUM(amount) v FROM expenses
-    WHERE ${SPEND}
-      AND substr(date,1,7)=? GROUP BY project_id`,
+        `SELECT e.project_id, SUM(e.amount) v FROM expenses e
+    WHERE e.status NOT IN ('Draft','Rejected')
+      AND substr(e.date,1,7)=?
+      AND NOT EXISTS (
+        SELECT 1 FROM admin_personal_expenses ape
+        WHERE ape.expense_id = e.id
+          AND e.date >= COALESCE((
+            SELECT TO_CHAR(
+              TO_TIMESTAMP(applied_at::double precision / 1000) AT TIME ZONE 'Asia/Kolkata',
+              'YYYY-MM-DD'
+            )
+            FROM schema_migrations
+            WHERE name = 'admin_personal_expense_tracking'
+          ), '9999-12-31')
+      )
+    GROUP BY e.project_id`,
       )
       .all(curMonth)
   ).forEach((r) => (spendThisMonth[r.project_id] = toRupees(r.v)));
@@ -2721,7 +2966,24 @@ router.get("/analytics", requireRole("accounts", "admin"), async (req, res) => {
   (
     await db
       .prepare(
-        `SELECT e.project_id, LOWER(TRIM(c.name)) category, SUM(e.amount) v, COUNT(*) c FROM expenses e LEFT JOIN categories c ON c.id=e.category_id WHERE ${SPEND} AND substr(e.date,1,7)=? GROUP BY e.project_id, LOWER(TRIM(c.name))`,
+        `SELECT e.project_id, LOWER(TRIM(c.name)) category, SUM(e.amount) v, COUNT(*) c
+         FROM expenses e
+         LEFT JOIN categories c ON c.id=e.category_id
+         WHERE e.status NOT IN ('Draft','Rejected')
+           AND substr(e.date,1,7)=?
+           AND NOT EXISTS (
+             SELECT 1 FROM admin_personal_expenses ape
+             WHERE ape.expense_id = e.id
+               AND e.date >= COALESCE((
+                 SELECT TO_CHAR(
+                   TO_TIMESTAMP(applied_at::double precision / 1000) AT TIME ZONE 'Asia/Kolkata',
+                   'YYYY-MM-DD'
+                 )
+                 FROM schema_migrations
+                 WHERE name = 'admin_personal_expense_tracking'
+               ), '9999-12-31')
+           )
+         GROUP BY e.project_id, LOWER(TRIM(c.name))`,
       )
       .all(curMonth)
   ).forEach((r) => {
@@ -2736,7 +2998,35 @@ router.get("/analytics", requireRole("accounts", "admin"), async (req, res) => {
   (
     await db
       .prepare(
-        `SELECT e.project_id, e.location_id, SUM(e.amount) v, COUNT(*) c FROM expenses e WHERE ${SPEND} AND substr(e.date,1,7)=? GROUP BY e.project_id, e.location_id`,
+        `SELECT e.project_id, e.location_id,
+         SUM(CASE WHEN NOT EXISTS (
+           SELECT 1 FROM admin_personal_expenses ape
+           WHERE ape.expense_id = e.id
+             AND e.date >= COALESCE((
+               SELECT TO_CHAR(
+                 TO_TIMESTAMP(applied_at::double precision / 1000) AT TIME ZONE 'Asia/Kolkata',
+                 'YYYY-MM-DD'
+               )
+               FROM schema_migrations
+               WHERE name = 'admin_personal_expense_tracking'
+             ), '9999-12-31')
+         ) THEN e.amount ELSE 0 END) v,
+         COUNT(CASE WHEN NOT EXISTS (
+           SELECT 1 FROM admin_personal_expenses ape
+           WHERE ape.expense_id = e.id
+             AND e.date >= COALESCE((
+               SELECT TO_CHAR(
+                 TO_TIMESTAMP(applied_at::double precision / 1000) AT TIME ZONE 'Asia/Kolkata',
+                 'YYYY-MM-DD'
+               )
+               FROM schema_migrations
+               WHERE name = 'admin_personal_expense_tracking'
+             ), '9999-12-31')
+         ) THEN 1 END) c
+         FROM expenses e
+         WHERE e.status NOT IN ('Draft','Rejected')
+           AND substr(e.date,1,7)=?
+         GROUP BY e.project_id, e.location_id`,
       )
       .all(curMonth)
   ).forEach((r) => {
