@@ -2335,6 +2335,7 @@ router.get(
         `SELECT e.*,
           ab.gross_amount AS gross_amount,
           ab.gst_amount AS gst_amount,
+          ab.total_amount AS total_amount,
           (SELECT fr.request_no
            FROM fund_request_items fri
            JOIN fund_requests fr ON fr.id = fri.fund_request_id
@@ -2375,6 +2376,19 @@ router.get(
     const lines = [cols.join(",")];
     rows.forEach((e) => {
       const p = m.proj[e.project_id];
+      const hasAmountBreakdown =
+        e.gross_amount != null && e.gst_amount != null;
+      const isGstVoucher = e.bill_received === "Yes with GST";
+      const grossAmount = hasAmountBreakdown
+        ? e.gross_amount
+        : isGstVoucher
+          ? null
+          : e.amount;
+      const gstAmount = hasAmountBreakdown
+        ? e.gst_amount
+        : isGstVoucher
+          ? null
+          : 0;
       lines.push(
         [
           e.voucher_no,
@@ -2385,9 +2399,9 @@ router.get(
           m.loc[e.location_id] || "",
           e.bill_received || "",
           e.payment_status || "",
-          e.gross_amount == null ? "" : toRupees(e.gross_amount),
-          e.gst_amount == null ? "" : toRupees(e.gst_amount),
-          toRupees(e.amount),
+          grossAmount == null ? "" : toRupees(grossAmount),
+          gstAmount == null ? "" : toRupees(gstAmount),
+          toRupees(e.total_amount == null ? e.amount : e.total_amount),
           e.status,
           e.fr_no || "",
           e.paid ? "Yes" : "No",
