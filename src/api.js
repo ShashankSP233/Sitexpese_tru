@@ -273,7 +273,9 @@ async function buildPaymentZip(res, expenses) {
     "Location",
     "Bill",
     "Payment",
-    "Amount",
+    "Gross Amount",
+    "GST Amount",
+    "Total Amount",
     "Status",
     "Paid",
     "Paid On",
@@ -294,6 +296,12 @@ async function buildPaymentZip(res, expenses) {
 
   for (const e of expenses) {
     const p = e.project;
+    const amountBreakdown = await db
+      .prepare(
+        "SELECT gross_amount, gst_amount, total_amount FROM expense_amount_breakdowns WHERE expense_id=?",
+      )
+      .get(e.id);
+    const isGstVoucher = e.bill_received === "Yes with GST";
 
     lines.push(
       [
@@ -305,7 +313,17 @@ async function buildPaymentZip(res, expenses) {
         e.locationName,
         e.bill_received || "",
         e.payment_status || "",
-        toRupees(e.amount),
+        amountBreakdown
+          ? toRupees(amountBreakdown.gross_amount)
+          : isGstVoucher
+            ? ""
+            : toRupees(e.amount),
+        amountBreakdown
+          ? toRupees(amountBreakdown.gst_amount)
+          : isGstVoucher
+            ? ""
+            : toRupees(0),
+        toRupees(amountBreakdown ? amountBreakdown.total_amount : e.amount),
         e.status,
         e.paid ? "Yes" : "No",
         dcell(e.paid_at),
